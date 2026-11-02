@@ -13,9 +13,35 @@
   <section class="signin hidden" id="signin" aria-labelledby="signinTitle">
     <div class="signin-card">
       <img src="/logo.svg" alt="" width="72" height="72">
-      <h1 id="signinTitle">Sign in to Qrox</h1>
+      <div class="auth-tabs" role="tablist">
+        <button class="tab" id="tabLogin" type="button" role="tab" aria-selected="true">Log in</button>
+        <button class="tab" id="tabSignup" type="button" role="tab" aria-selected="false">Sign up</button>
+      </div>
+      <h1 id="signinTitle">Welcome to Qrox</h1>
       <p>Your chats, credits and settings are saved to your account.</p>
-      <button class="primary wide" id="signinBtn" type="button">Continue with Google</button>
+      <form class="auth-form" id="loginForm" autocomplete="on">
+        <label class="field"><span>Username</span>
+          <input id="loginUser" name="username" autocomplete="username" maxlength="20" required></label>
+        <label class="field"><span>Password</span>
+          <input id="loginPass" type="password" name="password" autocomplete="current-password" required></label>
+        <p class="form-error" id="loginError" role="alert"></p>
+        <button class="primary wide" type="submit">Log in</button>
+      </form>
+
+      <form class="auth-form hidden" id="signupForm" autocomplete="on">
+        <label class="field"><span>Username</span>
+          <input id="signupUser" name="username" autocomplete="username" maxlength="20" placeholder="3 to 20 letters, numbers or _" required></label>
+        <label class="field"><span>Password (at least 8 characters)</span>
+          <input id="signupPass" type="password" autocomplete="new-password" minlength="8" required></label>
+        <label class="field"><span>Confirm password</span>
+          <input id="signupPass2" type="password" autocomplete="new-password" minlength="8" required></label>
+        <label class="field"><span>Date of birth</span>
+          <input id="signupDob" type="date" required></label>
+        <label class="field"><span>Email (optional)</span>
+          <input id="signupEmail" type="email" autocomplete="email"></label>
+        <p class="form-error" id="signupError" role="alert"></p>
+        <button class="primary wide" type="submit">Create account</button>
+      </form>
       <p class="fine">Under 13? Ask a parent or guardian before you create an account.</p>
     </div>
   </section>
