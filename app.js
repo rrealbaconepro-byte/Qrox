@@ -21,7 +21,7 @@
     memories: 'qrox.memories.v1',
     workspaces: 'qrox.workspaces.v1',
   };
-  const DEFAULT_PREFS = { search: false, code: false, personality: 'balanced', level: 'auto', memoryOn: true, workspace: null };
+  const DEFAULT_PREFS = { search: false, code: false, image: false, voice: '', personality: 'balanced', level: 'auto', memoryOn: true, workspace: null };
   const SUGGESTIONS = [
     { label: 'Explain simply', prompt: 'Explain how the internet works, as if I were ten years old.', send: true },
     { label: 'Write code', prompt: 'Write a small Python script that renames photos in a folder by the date they were taken.', send: true },
@@ -77,6 +77,8 @@ self.onmessage = async (e) => {
     edit: svg('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>'),
     trash: svg('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>'),
     arrow: svg('<path d="M7 7l10 10"/><path d="M17 9v8H9"/>'),
+    speak: svg('<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a9 9 0 0 1 0 12"/>'),
+    stop: svg('<rect x="6" y="6" width="12" height="12" rx="2"/>'),
   };
   const STAR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.5l2.6 7.9 7.9 2.6-7.9 2.6L12 22.5l-2.6-7.9-7.9-2.6 7.9-2.6z" fill="#fff"/></svg>';
 
@@ -119,6 +121,20 @@ self.onmessage = async (e) => {
     level: $('level'),
     memoryOn: $('memoryOn'),
     wipeData: $('wipeData'),
+    imageToggle: $('imageToggle'),
+    voiceBtn: $('voiceBtn'),
+    voiceState: $('voiceState'),
+    voice: $('voice'),
+    builderNav: $('builderNav'),
+    builder: $('builder'),
+    closeBuilder: $('closeBuilder'),
+    siteName: $('siteName'),
+    siteDesc: $('siteDesc'),
+    buildGo: $('buildGo'),
+    buildStatus: $('buildStatus'),
+    sitePreview: $('sitePreview'),
+    siteDownload: $('siteDownload'),
+    siteCode: $('siteCode'),
     memory: $('memoryDialog'),
     closeMemory: $('closeMemory'),
     memoryForm: $('memoryForm'),
@@ -181,7 +197,7 @@ self.onmessage = async (e) => {
 
   function saveChats() {
     // Image and PDF data stays in memory only, so storage isn't filled with large files.
-    const slim = chats.map((c) => ({ ...c, messages: c.messages.map(({ media, ...rest }) => rest) }));
+    const slim = chats.map((c) => ({ ...c, messages: c.messages.map(({ media, image, ...rest }) => rest) }));
     saveJson(KEYS.chats, slim);
   }
 
@@ -459,9 +475,21 @@ self.onmessage = async (e) => {
 
     if (m.role === 'user') {
       bubble.textContent = m.text;
+      (m.media || []).filter((f) => f.kind === 'image').forEach((f) => {
+        const img = el('img', 'user-img');
+        img.src = `data:${f.mediaType};base64,${f.data}`;
+        img.alt = f.name || 'Your image';
+        bubble.append(img);
+      });
       if (m.files && m.files.length) bubble.append(el('div', 'msg-files', 'Attached: ' + m.files.join(', ')));
     } else {
       bubble.innerHTML = renderMarkdown(m.text);
+      if (m.image) {
+        const img = el('img', 'gen-image');
+        img.src = m.image;
+        img.alt = 'Image created by Qrox';
+        bubble.append(img);
+      }
       decorateCode(bubble);
     }
 
@@ -482,7 +510,10 @@ self.onmessage = async (e) => {
       const down = actionButton('down', 'Not a good answer', () => setFeedback(m, 'down'));
       up.classList.toggle('on', m.feedback === 'up');
       down.classList.toggle('on', m.feedback === 'down');
-      bar.append(up, down, actionButton('translate', 'Translate', () => translateText(m.text || '')));
+      const reading = speakingMsg === m;
+      const speakBtn = actionButton(reading ? 'stop' : 'speak', reading ? 'Stop reading' : 'Read aloud', () => toggleSpeak(m));
+      speakBtn.classList.toggle('on', reading);
+      bar.append(up, down, actionButton('translate', 'Translate', () => translateText(m.text || '')), speakBtn);
       if (index === msgs.length - 1) {
         bar.append(actionButton('regen', 'Regenerate', () => regenerate()));
         bar.append(actionButton('check', 'Double-check this answer', () => doubleCheck()));
@@ -578,7 +609,10 @@ self.onmessage = async (e) => {
   function updateSendState() {
     els.send.classList.toggle('stop', busy);
     els.send.setAttribute('aria-label', busy ? 'Stop reply' : 'Send message');
-    els.send.disabled = !busy && !els.input.value.trim() && pending.length === 0;
+    const locked = Boolean(currentChat()?.ended);
+    els.input.disabled = locked;
+    els.input.placeholder = locked ? 'This conversation has ended. Start a new chat.' : 'Ask anything';
+    els.send.disabled = locked || (!busy && !els.input.value.trim() && pending.length === 0);
   }
 
   function autoResize() {
@@ -589,6 +623,7 @@ self.onmessage = async (e) => {
   function syncToggles() {
     els.search.setAttribute('aria-pressed', String(prefs.search));
     els.code.setAttribute('aria-pressed', String(prefs.code));
+    els.imageToggle.setAttribute('aria-pressed', String(prefs.image));
   }
 
   // ---------- Sending ----------
@@ -602,6 +637,10 @@ self.onmessage = async (e) => {
 
   // send() takes either the composer (no options) or a message the app writes itself (options.text).
   async function send(options = {}) {
+    if (currentChat()?.ended) {
+      if (voiceState.active) stopVoiceMode();
+      return;
+    }
     if (busy) return;
     const fromComposer = options.text === undefined;
     const text = (fromComposer ? els.input.value : options.text).trim();
@@ -648,6 +687,7 @@ self.onmessage = async (e) => {
       autoResize();
       renderAttachments();
     }
+    if (fromComposer && prefs.image) return makeImage(chat, text || 'an image', startIndex);
     await streamReply(chat, startIndex, mode);
   }
 
@@ -689,6 +729,7 @@ self.onmessage = async (e) => {
         throw new Error(info.error || `Request failed (${res.status}).`);
       }
       reply.by = res.headers.get('X-Qrox-Role') || '';
+      if (res.headers.get('X-Qrox-Status') === 'ended') chat.ended = true;
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -721,6 +762,7 @@ self.onmessage = async (e) => {
       saveChats();
       renderSidebar();
       updateSendState();
+      onReplyFinished(reply, chat);
       // Wait for the star's pop to finish before rebuilding the thread, so the animation isn't cut off.
       setTimeout(() => { if (!busy) renderThread(); }, 1300);
     }
@@ -1080,6 +1122,7 @@ self.onmessage = async (e) => {
     els.personality.value = prefs.personality;
     els.level.value = prefs.level;
     els.memoryOn.checked = prefs.memoryOn;
+    populateVoices();
     if (!els.settings.open) els.settings.showModal();
   }
 
@@ -1127,6 +1170,287 @@ self.onmessage = async (e) => {
       } catch {
         // Recognition is already running.
       }
+    });
+  }
+
+  // ---------- Website builder ----------
+  let builtSite = '';
+
+  function openBuilder() {
+    if (!els.builder.open) els.builder.showModal();
+  }
+
+  async function readAll(res) {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let out = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+    }
+    return out + decoder.decode();
+  }
+
+  async function buildSite() {
+    const name = els.siteName.value.trim() || 'My site';
+    const description = els.siteDesc.value.trim();
+    if (!description) {
+      showToast('Describe the website first.');
+      return;
+    }
+    els.buildGo.disabled = true;
+    els.buildStatus.textContent = 'Building your website…';
+    const prompt = 'Build a complete, single-file, responsive website named "' + name + '". ' +
+      'Put all HTML, CSS and JavaScript in one file with no external files. Description: ' + description + '. ' +
+      'Reply with one ```html code block containing the full file, then one short sentence about what you built.';
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: prompt }],
+          mode: 'code',
+          settings: { personality: 'balanced', level: 'auto' },
+          memories: [],
+        }),
+      });
+      if (!res.ok) {
+        const info = await res.json().catch(() => ({}));
+        throw new Error(info.error || 'The website could not be built.');
+      }
+      const text = await readAll(res);
+      const match = text.match(/```html\s*([\s\S]*?)```/i);
+      if (!match) throw new Error(text.slice(0, 200) || 'No website code came back. Try describing it differently.');
+      builtSite = match[1].trim();
+      els.sitePreview.srcdoc = builtSite;
+      els.siteDownload.disabled = false;
+      els.siteCode.disabled = false;
+      els.buildStatus.textContent = 'Done. Check the preview below.';
+    } catch (err) {
+      els.buildStatus.textContent = err.message;
+    } finally {
+      els.buildGo.disabled = false;
+    }
+  }
+
+  function downloadSite() {
+    const url = URL.createObjectURL(new Blob([builtSite], { type: 'text/html' }));
+    const link = el('a');
+    link.href = url;
+    link.download = (els.siteName.value.trim() || 'site').replace(/[^\w-]+/g, '-').toLowerCase() + '.html';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  // ---------- Image creation ----------
+  async function makeImage(chat, prompt, animateFrom) {
+    const reply = { role: 'assistant', text: '', by: 'creative', feedback: null, followups: [] };
+    chat.messages.push(reply);
+    busy = true;
+    controller = new AbortController();
+    updateSendState();
+    renderThread(animateFrom);
+
+    const turn = els.thread.lastElementChild;
+    const star = startStar(turn);
+    try {
+      const res = await fetch('/api/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+        signal: controller.signal,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'The image could not be created.');
+      reply.text = 'Here is your image.';
+      reply.image = data.image;
+    } catch (err) {
+      reply.text = err.name === 'AbortError' ? '*Stopped.*' : `⚠️ ${err.message}`;
+    } finally {
+      busy = false;
+      controller = null;
+      finishStar(star);
+      saveChats();
+      renderSidebar();
+      updateSendState();
+      setTimeout(() => { if (!busy) renderThread(); }, 1300);
+      if (voiceState.active) startListening();
+    }
+  }
+
+  // ---------- Read aloud and voice mode ----------
+  const hasTTS = 'speechSynthesis' in window;
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const voiceState = { active: false, rec: null, phase: 'idle' };
+  let speakingMsg = null;
+
+  // Turns Markdown into plain text, so the voice doesn't read symbols or code.
+  function plainText(md) {
+    return md
+      .replace(/```[\s\S]*?```/g, ' (code omitted) ')
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/[#*_>~|-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function pickVoice() {
+    if (!hasTTS) return null;
+    const voices = speechSynthesis.getVoices();
+    return voices.find((v) => v.name === prefs.voice)
+      || voices.find((v) => /^en/i.test(v.lang))
+      || voices[0]
+      || null;
+  }
+
+  function populateVoices() {
+    if (!hasTTS || !els.voice) return;
+    const voices = speechSynthesis.getVoices();
+    els.voice.innerHTML = '';
+    const auto = el('option', '', 'Automatic (English)');
+    auto.value = '';
+    els.voice.append(auto);
+    for (const v of voices) {
+      const option = el('option', '', `${v.name} (${v.lang})`);
+      option.value = v.name;
+      els.voice.append(option);
+    }
+    els.voice.value = prefs.voice || '';
+  }
+
+  // Reads text out loud. Long replies are split into sentences, which keeps speech reliable in every browser.
+  function speak(md, onDone) {
+    if (!hasTTS) {
+      showToast('Read aloud is not supported in this browser.', 3000);
+      if (onDone) onDone();
+      return;
+    }
+    speechSynthesis.cancel();
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (onDone) onDone();
+    };
+    const parts = (plainText(md).slice(0, 4000).match(/[^.!?]+[.!?]*/g) || []).map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 0) {
+      finish();
+      return;
+    }
+    const voice = pickVoice();
+    parts.forEach((part, i) => {
+      const utterance = new SpeechSynthesisUtterance(part);
+      if (voice) {
+        utterance.voice = voice;
+        utterance.lang = voice.lang;
+      }
+      if (i === parts.length - 1) {
+        utterance.onend = finish;
+        utterance.onerror = finish;
+      }
+      speechSynthesis.speak(utterance);
+    });
+  }
+
+  function stopSpeaking() {
+    if (hasTTS) speechSynthesis.cancel();
+    speakingMsg = null;
+  }
+
+  function toggleSpeak(m) {
+    const wasThis = speakingMsg === m;
+    stopSpeaking();
+    if (!wasThis) {
+      speakingMsg = m;
+      speak(m.text || '', () => {
+        if (speakingMsg === m) speakingMsg = null;
+        renderThread();
+      });
+    }
+    renderThread();
+  }
+
+  function setVoicePhase(phase) {
+    voiceState.phase = phase;
+    const labels = { listening: 'Listening…', thinking: 'Thinking…', speaking: 'Speaking…' };
+    els.voiceState.textContent = labels[phase] || '';
+    els.voiceState.classList.toggle('hidden', !labels[phase]);
+  }
+
+  // Talk mode: listen, send what was said, read the reply aloud, then listen again.
+  function startVoiceMode() {
+    if (!SpeechRec || !hasTTS) {
+      showToast('Voice mode needs Chrome, Edge or Safari.', 3000);
+      return;
+    }
+    voiceState.active = true;
+    els.voiceBtn.setAttribute('aria-pressed', 'true');
+    els.form.classList.add('listening');
+    startListening();
+  }
+
+  function stopVoiceMode() {
+    voiceState.active = false;
+    if (voiceState.rec) {
+      try { voiceState.rec.abort(); } catch { /* already stopped */ }
+    }
+    stopSpeaking();
+    els.voiceBtn.setAttribute('aria-pressed', 'false');
+    els.form.classList.remove('listening');
+    setVoicePhase('idle');
+  }
+
+  function startListening() {
+    if (!voiceState.active) return;
+    if (busy) {
+      setTimeout(startListening, 400);
+      return;
+    }
+    const rec = new SpeechRec();
+    voiceState.rec = rec;
+    rec.continuous = false;
+    rec.interimResults = false;
+    rec.lang = navigator.language || 'en-US';
+
+    rec.onresult = (e) => {
+      const text = e.results[0]?.[0]?.transcript?.trim();
+      if (!text) return;
+      setVoicePhase('thinking');
+      send({ text });
+    };
+    rec.onend = () => {
+      if (voiceState.active && voiceState.phase === 'listening') {
+        setTimeout(startListening, 300);
+      }
+    };
+    rec.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        showToast('Microphone access was blocked. Allow it in your browser settings.', 4000);
+        stopVoiceMode();
+      }
+    };
+    try {
+      rec.start();
+      setVoicePhase('listening');
+    } catch {
+      stopVoiceMode();
+    }
+  }
+
+  function onReplyFinished(reply, chat) {
+    if (!voiceState.active) return;
+    if (chat.ended || !reply.text || reply.text.startsWith('*Stopped')) {
+      stopVoiceMode();
+      return;
+    }
+    setVoicePhase('speaking');
+    speak(reply.text, () => {
+      if (voiceState.active) startListening();
     });
   }
 
@@ -1235,6 +1559,27 @@ self.onmessage = async (e) => {
     renderMemories();
   });
 
+  els.voiceBtn.addEventListener('click', () => (voiceState.active ? stopVoiceMode() : startVoiceMode()));
+  els.imageToggle.addEventListener('click', () => {
+    prefs.image = !prefs.image;
+    savePrefs();
+    syncToggles();
+  });
+  els.voice.addEventListener('change', () => {
+    prefs.voice = els.voice.value;
+    savePrefs();
+  });
+  els.builderNav.addEventListener('click', openBuilder);
+  els.closeBuilder.addEventListener('click', () => els.builder.close());
+  els.builder.addEventListener('click', (e) => {
+    if (e.target === els.builder) els.builder.close();
+  });
+  els.buildGo.addEventListener('click', buildSite);
+  els.siteDownload.addEventListener('click', downloadSite);
+  els.siteCode.addEventListener('click', () => {
+    els.builder.close();
+    openLab(builtSite, 'html');
+  });
   els.labRun.addEventListener('click', runLab);
   els.labCopy.addEventListener('click', () => copyText(els.labCode.value, 'Code copied'));
   els.labCode.addEventListener('keydown', (e) => {
@@ -1300,6 +1645,8 @@ self.onmessage = async (e) => {
   prefs = { ...DEFAULT_PREFS, ...loadJson(KEYS.prefs, {}) };
 
   setupVoice();
+  populateVoices();
+  if (hasTTS) speechSynthesis.onvoiceschanged = populateVoices;
   setSidebar(!isMobile());
   syncToggles();
   renderWorkspaces();
