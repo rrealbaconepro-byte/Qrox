@@ -1,7 +1,7 @@
 {
   "name": "qrox",
-  "version": "1.0.0",
-  "description": "Qrox, an AI chat assistant web app.",
+  "version": "1.1.0",
+  "description": "Qrox, an AI chat assistant web app powered by Groq.",
   "private": true,
   "main": "server.js",
   "scripts": {
@@ -9,10 +9,10 @@
     "dev": "node --watch server.js"
   },
   "engines": {
-    "node": ">=18.17.0"
+    "node": ">=20"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "pdf-parse": "^1.1.1"
   }
 }
