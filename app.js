@@ -1,4 +1,20 @@
 // app.js: Qrox front end
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+
+// Firebase web config. These values are public by design. Security comes from the server checks and the
+// Firestore rules. Analytics is left out until the site has a cookie consent banner.
+const firebaseConfig = {
+  apiKey: 'AIzaSyBhIDOVSEv-AON7Pr-37q64KUoq7f5Vrb4',
+  authDomain: 'qrox-a82ff.firebaseapp.com',
+  projectId: 'qrox-a82ff',
+  storageBucket: 'qrox-a82ff.firebasestorage.app',
+  messagingSenderId: '128139138869',
+  appId: '1:128139138869:web:d0a7216fbd00ffc2e55e7c',
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+
 (() => {
   'use strict';
 
@@ -14,20 +30,27 @@
   const RUNNABLE = { javascript: 'javascript', js: 'javascript', python: 'python', py: 'python', html: 'html', css: 'css' };
   const ROLE_NAMES = { thinker: 'Thinker', researcher: 'Researcher', coder: 'Code Bot', creative: 'Creative', verifier: 'Verifier' };
   const DOUBLE_CHECK = 'Double-check your previous answer for mistakes. Correct anything that is wrong, and say clearly what you are not sure about.';
+  const SUPPORT_EMAIL = 'bbrootorg@gmail.com';
+  const CREDIT_CEILING = 1000000;
+  const AGE_LABELS = { unknown: 'Age not set', under13: 'Under 13', teen: 'Teen (13–17)', adult: 'Adult (18+)' };
   const KEYS = {
-    chats: 'qrox.chats.v1',
-    drafts: 'qrox.drafts.v1',
+    chats: 'qrox.chats.v2',
+    drafts: 'qrox.drafts.v2',
+    memories: 'qrox.memories.v2',
+    workspaces: 'qrox.workspaces.v2',
     prefs: 'qrox.prefs.v2',
-    memories: 'qrox.memories.v1',
-    workspaces: 'qrox.workspaces.v1',
   };
-  const DEFAULT_PREFS = { search: false, code: false, image: false, voice: '', personality: 'balanced', level: 'auto', memoryOn: true, workspace: null };
+  const DEFAULT_PREFS = {
+    search: false, code: false, personality: 'balanced', level: 'auto', memoryOn: true, workspace: null,
+    voiceReplies: false, voiceName: '', rate: 1,
+  };
   const SUGGESTIONS = [
     { label: 'Explain simply', prompt: 'Explain how the internet works, as if I were ten years old.', send: true },
     { label: 'Write code', prompt: 'Write a small Python script that renames photos in a folder by the date they were taken.', send: true },
     { label: 'Improve my writing', prompt: 'Rewrite this to sound clearer and more professional: ', send: false },
     { label: 'Plan something', prompt: 'Plan a relaxed three-day city break in Lisbon with a daily itinerary.', send: true },
   ];
+  const SpeechApi = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   // Runs JavaScript in a Web Worker, so an endless loop can't freeze the page.
   const JS_WORKER = `
@@ -77,92 +100,56 @@ self.onmessage = async (e) => {
     edit: svg('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>'),
     trash: svg('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>'),
     arrow: svg('<path d="M7 7l10 10"/><path d="M17 9v8H9"/>'),
-    speak: svg('<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a9 9 0 0 1 0 12"/>'),
-    stop: svg('<rect x="6" y="6" width="12" height="12" rx="2"/>'),
+    pin: svg('<path d="M9 4h6l-1 5 3 3v2H7v-2l3-3z"/><path d="M12 14v6"/>'),
+    speak: svg('<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6"/>'),
   };
   const STAR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.5l2.6 7.9 7.9 2.6-7.9 2.6L12 22.5l-2.6-7.9-7.9-2.6 7.9-2.6z" fill="#fff"/></svg>';
 
   const $ = (id) => document.getElementById(id);
   const els = {
-    app: $('app'),
-    scrim: $('scrim'),
-    toast: $('toast'),
-    toggleSidebar: $('toggleSidebar'),
-    collapseBtn: $('collapseBtn'),
-    searchNav: $('searchNav'),
-    newChat: $('newChat'),
-    labNav: $('labNav'),
-    memoryNav: $('memoryNav'),
-    settingsNav: $('settingsNav'),
-    addWorkspace: $('addWorkspace'),
-    workspaceList: $('workspaceList'),
-    chatSearch: $('chatSearch'),
-    chatList: $('chatList'),
-    messages: $('messages'),
-    thread: $('thread'),
-    jump: $('jumpBtn'),
-    form: $('composer'),
-    input: $('input'),
-    send: $('sendBtn'),
-    attachBtn: $('attachBtn'),
-    fileInput: $('fileInput'),
-    attachments: $('attachments'),
-    mic: $('micBtn'),
-    search: $('searchToggle'),
-    code: $('codeToggle'),
-    roleLabel: $('roleLabel'),
-    exportBtn: $('exportBtn'),
-    helpBtn: $('helpBtn'),
-    shortcuts: $('shortcuts'),
-    closeShortcuts: $('closeShortcuts'),
-    settings: $('settings'),
-    closeSettings: $('closeSettings'),
-    personality: $('personality'),
-    level: $('level'),
-    memoryOn: $('memoryOn'),
-    wipeData: $('wipeData'),
-    imageToggle: $('imageToggle'),
-    voiceBtn: $('voiceBtn'),
-    voiceState: $('voiceState'),
-    voice: $('voice'),
-    builderNav: $('builderNav'),
-    builder: $('builder'),
-    closeBuilder: $('closeBuilder'),
-    siteName: $('siteName'),
-    siteDesc: $('siteDesc'),
-    buildGo: $('buildGo'),
-    buildStatus: $('buildStatus'),
-    sitePreview: $('sitePreview'),
-    siteDownload: $('siteDownload'),
-    siteCode: $('siteCode'),
-    memory: $('memoryDialog'),
-    closeMemory: $('closeMemory'),
-    memoryForm: $('memoryForm'),
-    memoryInput: $('memoryInput'),
-    memoryList: $('memoryList'),
-    clearMemories: $('clearMemories'),
-    lab: $('lab'),
-    labLang: $('labLang'),
-    labCode: $('labCode'),
-    labRun: $('labRun'),
-    labCopy: $('labCopy'),
-    labClose: $('labClose'),
-    labOutput: $('labOutput'),
-    labPreview: $('labPreview'),
+    app: $('app'), scrim: $('scrim'), toast: $('toast'),
+    signin: $('signin'), signinBtn: $('signinBtn'), account: $('account'), creditsText: $('creditsText'),
+    creditBar: $('creditBar'), refill: $('refill'), ageLabel: $('ageLabel'), ageBtn: $('ageBtn'), signOutBtn: $('signOutBtn'),
+    notice: $('notice'), noticeText: $('noticeText'), noticeBtn: $('noticeBtn'),
+    toggleSidebar: $('toggleSidebar'), collapseBtn: $('collapseBtn'), searchNav: $('searchNav'), newChat: $('newChat'),
+    labNav: $('labNav'), memoryNav: $('memoryNav'), settingsNav: $('settingsNav'),
+    addWorkspace: $('addWorkspace'), workspaceList: $('workspaceList'), chatSearch: $('chatSearch'), chatList: $('chatList'),
+    messages: $('messages'), thread: $('thread'), jump: $('jumpBtn'),
+    form: $('composer'), input: $('input'), send: $('sendBtn'), attachBtn: $('attachBtn'), fileInput: $('fileInput'),
+    attachments: $('attachments'), mic: $('micBtn'), wave: $('wave'), search: $('searchToggle'), code: $('codeToggle'),
+    roleLabel: $('roleLabel'), exportBtn: $('exportBtn'), helpBtn: $('helpBtn'),
+    shortcuts: $('shortcuts'), closeShortcuts: $('closeShortcuts'),
+    settings: $('settings'), closeSettings: $('closeSettings'), personality: $('personality'), level: $('level'),
+    memoryOn: $('memoryOn'), voiceReplies: $('voiceReplies'), voiceSelect: $('voiceSelect'), rate: $('rate'), wipeData: $('wipeData'),
+    memory: $('memoryDialog'), closeMemory: $('closeMemory'), memoryForm: $('memoryForm'), memoryInput: $('memoryInput'),
+    memoryList: $('memoryList'), clearMemories: $('clearMemories'),
+    lab: $('lab'), labLang: $('labLang'), labCode: $('labCode'), labRun: $('labRun'), labCopy: $('labCopy'),
+    labClose: $('labClose'), labOutput: $('labOutput'), labPreview: $('labPreview'),
+    ageDialog: $('ageDialog'), ageForm: $('ageForm'), dob: $('dob'), ageResult: $('ageResult'),
+    reportAge: $('reportAge'), closeAge: $('closeAge'),
   };
 
   // ---------- State ----------
+  let prefs = { ...DEFAULT_PREFS };
   let chats = [];
   let memories = [];
   let workspaces = [];
   let drafts = {};
-  let prefs = { ...DEFAULT_PREFS };
+  let user = null;          // signed-in Firebase user
+  let profile = null;       // account summary from the server
   let currentId = null;     // open chat, or null for a fresh one
   let pending = [];         // files attached to the message being written
   let busy = false;         // true while a reply is in progress
   let controller = null;    // cancels the reply in progress
   let draftTimer = null;
   let toastTimer = null;
+  let talking = false;      // hands-free talk mode
+  let talkBuffer = '';
+  let talkTimer = null;
+  let speaking = false;     // Qrox is reading a reply aloud
+  let rec = null;           // speech recognition instance
+  let voices = [];
+  let ageAsked = false;
 
   const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
   const currentChat = () => chats.find((c) => c.id === currentId) || null;
@@ -177,7 +164,7 @@ self.onmessage = async (e) => {
     return node;
   }
 
-  // ---------- Storage ----------
+  // ---------- Storage (chats and memories are kept per account on this device) ----------
   function loadJson(key, fallback) {
     try {
       const value = JSON.parse(localStorage.getItem(key));
@@ -195,19 +182,33 @@ self.onmessage = async (e) => {
     }
   }
 
-  function saveChats() {
-    // Image and PDF data stays in memory only, so storage isn't filled with large files.
-    const slim = chats.map((c) => ({ ...c, messages: c.messages.map(({ media, image, ...rest }) => rest) }));
-    saveJson(KEYS.chats, slim);
+  function scopedKey(name) {
+    return `${KEYS[name]}.${user ? user.uid : 'guest'}`;
   }
 
+  function loadUserData() {
+    chats = loadJson(scopedKey('chats'), []);
+    if (!Array.isArray(chats)) chats = [];
+    memories = loadJson(scopedKey('memories'), []);
+    workspaces = loadJson(scopedKey('workspaces'), []);
+    drafts = loadJson(scopedKey('drafts'), {});
+    currentId = null;
+    pending = [];
+  }
+
+  function saveChats() {
+    // Image and PDF data stays in memory only, so storage isn't filled with large files.
+    const slim = chats.map((c) => ({ ...c, messages: c.messages.map(({ media, ...rest }) => rest) }));
+    saveJson(scopedKey('chats'), slim);
+  }
+
+  function saveMemories() { saveJson(scopedKey('memories'), memories); }
+  function saveWorkspaces() { saveJson(scopedKey('workspaces'), workspaces); }
   function savePrefs() { saveJson(KEYS.prefs, prefs); }
-  function saveMemories() { saveJson(KEYS.memories, memories); }
-  function saveWorkspaces() { saveJson(KEYS.workspaces, workspaces); }
 
   function persistDrafts() {
     clearTimeout(draftTimer);
-    draftTimer = setTimeout(() => saveJson(KEYS.drafts, drafts), 300);
+    draftTimer = setTimeout(() => saveJson(scopedKey('drafts'), drafts), 300);
   }
 
   function storeDraft() {
@@ -287,6 +288,153 @@ self.onmessage = async (e) => {
     showToast(message);
   }
 
+  // ---------- Voice: read-aloud ----------
+  // Removes markdown symbols and replaces code blocks, so the voice reads naturally.
+  function speakable(markdown) {
+    return markdown
+      .replace(/```[\s\S]*?```/g, ' (code example) ')
+      .replace(/`([^`]*)`/g, '$1')
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .replace(/https?:\/\/\S+/g, 'link')
+      .replace(/[*_#>|~-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 4000);
+  }
+
+  function loadVoices() {
+    if (!('speechSynthesis' in window)) return;
+    voices = speechSynthesis.getVoices();
+    els.voiceSelect.innerHTML = '';
+    for (const v of voices) {
+      const option = el('option', '', `${v.name} (${v.lang})`);
+      option.value = v.name;
+      els.voiceSelect.append(option);
+    }
+    els.voiceSelect.value = prefs.voiceName || voices.find((v) => v.lang.startsWith('en'))?.name || voices[0]?.name || '';
+  }
+
+  function speak(markdown, onDone) {
+    if (!('speechSynthesis' in window)) {
+      showToast('Read-aloud is not supported in this browser.', 3000);
+      return;
+    }
+    speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(speakable(markdown));
+    const chosen = voices.find((v) => v.name === prefs.voiceName);
+    if (chosen) {
+      utterance.voice = chosen;
+      utterance.lang = chosen.lang;
+    }
+    utterance.rate = prefs.rate || 1;
+    utterance.pitch = 1.05;
+    const finish = () => {
+      speaking = false;
+      if (onDone) onDone();
+    };
+    utterance.onend = finish;
+    utterance.onerror = finish;
+    speaking = true;
+    speechSynthesis.speak(utterance);
+  }
+
+  function stopSpeaking() {
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    speaking = false;
+  }
+
+  function toggleSpeak(text) {
+    if (speaking) stopSpeaking();
+    else speakReply(text);
+  }
+
+  // Pauses listening while Qrox talks, so it doesn't hear itself.
+  function speakReply(text) {
+    const wasTalking = talking;
+    if (wasTalking) {
+      try { rec?.stop(); } catch { /* not running */ }
+    }
+    speak(text, () => {
+      if (wasTalking && talking) {
+        try { rec?.start(); } catch { /* already running */ }
+      }
+    });
+  }
+
+  // ---------- Voice: talk to Qrox (hands-free) ----------
+  function ensureRec() {
+    if (rec || !SpeechApi) return rec;
+    rec = new SpeechApi();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = navigator.language || 'en-US';
+
+    rec.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const piece = e.results[i][0].transcript;
+        if (e.results[i].isFinal) talkBuffer += piece + ' ';
+        else interim += piece;
+      }
+      els.input.value = (talkBuffer + interim).trim();
+      autoResize();
+      updateSendState();
+      clearTimeout(talkTimer);
+      talkTimer = setTimeout(sendTalk, 1400); // send after a short pause
+    };
+
+    rec.onend = () => {
+      if (talking && !speaking) {
+        try { rec.start(); } catch { /* already running */ }
+      }
+    };
+
+    rec.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        stopTalk();
+        showToast('Microphone access is blocked for this site.', 3200);
+      }
+    };
+    return rec;
+  }
+
+  function sendTalk() {
+    const text = els.input.value.trim();
+    talkBuffer = '';
+    if (!text || busy) return; // if a reply is still coming, the text stays in the box
+    els.input.value = '';
+    autoResize();
+    updateSendState();
+    send({ text });
+  }
+
+  function startTalk() {
+    if (!SpeechApi) {
+      showToast('Voice input is not supported in this browser.', 3000);
+      return;
+    }
+    if (!user) {
+      showToast('Sign in to talk to Qrox.', 2600);
+      return;
+    }
+    talking = true;
+    talkBuffer = '';
+    els.mic.classList.add('listening');
+    els.wave.classList.remove('hidden');
+    try { ensureRec().start(); } catch { /* already listening */ }
+    showToast('Listening. Pause when you finish and Qrox will reply.', 3000);
+  }
+
+  function stopTalk() {
+    talking = false;
+    clearTimeout(talkTimer);
+    talkBuffer = '';
+    try { rec?.stop(); } catch { /* not running */ }
+    els.mic.classList.remove('listening');
+    els.wave.classList.add('hidden');
+  }
+
   // ---------- Thinking star ----------
   // A small star flies while Qrox works. When the reply is done, it grows, pops and throws sparks.
   function startStar(turn) {
@@ -327,6 +475,83 @@ self.onmessage = async (e) => {
     setTimeout(() => handle.stage.remove(), 1300);
   }
 
+  // ---------- Account ----------
+  // Every server call sends the Firebase sign-in token. The server checks it, so it can't be faked.
+  async function api(path, options = {}) {
+    const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+    if (auth.currentUser) headers.Authorization = `Bearer ${await auth.currentUser.getIdToken()}`;
+    return fetch(path, { ...options, headers });
+  }
+
+  function formatMs(ms) {
+    const minutes = Math.ceil(ms / 60000);
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return h ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  async function loadProfile() {
+    if (!user) {
+      profile = null;
+      renderAccount();
+      return;
+    }
+    try {
+      const res = await api('/api/me');
+      if (res.ok) profile = await res.json();
+      else if (res.status === 401) showToast('Your sign-in expired. Please sign in again.', 3200);
+    } catch {
+      // Offline: keep the last known profile.
+    }
+    renderAccount();
+  }
+
+  function renderAccount() {
+    const signedIn = Boolean(user);
+    els.signin.classList.toggle('hidden', signedIn);
+    els.account.classList.toggle('hidden', !signedIn);
+    if (signedIn) {
+      if (!profile) {
+        els.creditsText.textContent = 'Loading…';
+      } else {
+        els.creditsText.textContent = `${profile.credits.toLocaleString()} credits`;
+        els.creditBar.style.width = `${Math.min(100, (profile.credits / CREDIT_CEILING) * 100)}%`;
+        els.ageLabel.textContent = AGE_LABELS[profile.ageTier] || AGE_LABELS.unknown;
+        els.refill.textContent = profile.refillInMs ? `Empty. You get 9,000 credits in ${formatMs(profile.refillInMs)}.` : '';
+      }
+    }
+    renderNotice();
+    updateSendState();
+  }
+
+  // Shows the reason a chat can't be used, or that the age still needs confirming.
+  function renderNotice() {
+    const chat = currentChat();
+    let message = '';
+    let showAgeButton = false;
+    if (!user) {
+      message = '';
+    } else if (chat?.ended) {
+      message = 'This conversation has ended because of repeated abusive messages. Start a new chat to continue.';
+    } else if (profile?.blockedInMs) {
+      message = `Chats are paused for ${formatMs(profile.blockedInMs)} after repeated abusive messages.`;
+    } else if (profile?.needsAge) {
+      message = 'Confirm your age to unlock your full experience. Until then, Qrox uses teen-safe settings.';
+      showAgeButton = true;
+    }
+    els.notice.classList.toggle('hidden', !message);
+    els.noticeText.textContent = message;
+    els.noticeBtn.classList.toggle('hidden', !showAgeButton);
+  }
+
+  function openAge() {
+    els.dob.max = new Date().toISOString().slice(0, 10);
+    els.ageResult.textContent = '';
+    const body = `My Qrox age group looks wrong.\nAccount email: ${user?.email || 'unknown'}\nWhat it should be: `;
+    els.reportAge.href = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Qrox: wrong age group')}&body=${encodeURIComponent(body)}`;
+    if (!els.ageDialog.open) els.ageDialog.showModal();
+  }
+
   // ---------- Sidebar ----------
   function visibleChats() {
     const q = els.chatSearch.value.trim().toLowerCase();
@@ -338,44 +563,46 @@ self.onmessage = async (e) => {
   }
 
   function renderSidebar() {
-    const list = visibleChats();
+    const list = visibleChats().sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
     els.chatList.innerHTML = '';
     if (list.length === 0) {
       els.chatList.append(el('p', 'empty-list', chats.length ? 'No chats match.' : 'Your chats will appear here.'));
       return;
     }
 
-    for (const chat of list) {
+    list.forEach((chat, index) => {
       const row = el('div', 'chat-row' + (chat.id === currentId ? ' active' : ''));
+      row.style.setProperty('--i', index);
 
       const open = el('button', 'chat-open', chat.title);
       open.type = 'button';
       open.title = chat.title;
       open.addEventListener('click', () => openChat(chat.id));
 
+      const pin = el('button', 'chat-action' + (chat.pinned ? ' pinned-mark' : ''));
+      pin.type = 'button';
+      pin.title = chat.pinned ? 'Unpin chat' : 'Pin chat';
+      pin.setAttribute('aria-label', pin.title);
+      pin.innerHTML = ICON.pin;
+      pin.addEventListener('click', (e) => { e.stopPropagation(); togglePin(chat.id); });
+
       const rename = el('button', 'chat-action');
       rename.type = 'button';
       rename.title = 'Rename chat';
       rename.setAttribute('aria-label', 'Rename chat');
       rename.innerHTML = ICON.edit;
-      rename.addEventListener('click', (e) => {
-        e.stopPropagation();
-        renameChat(chat.id);
-      });
+      rename.addEventListener('click', (e) => { e.stopPropagation(); renameChat(chat.id); });
 
       const remove = el('button', 'chat-action');
       remove.type = 'button';
       remove.title = 'Delete chat';
       remove.setAttribute('aria-label', 'Delete chat');
       remove.innerHTML = ICON.trash;
-      remove.addEventListener('click', (e) => {
-        e.stopPropagation();
-        deleteChat(chat.id);
-      });
+      remove.addEventListener('click', (e) => { e.stopPropagation(); deleteChat(chat.id); });
 
-      row.append(open, rename, remove);
+      row.append(open, pin, rename, remove);
       els.chatList.append(row);
-    }
+    });
   }
 
   function renderWorkspaces() {
@@ -465,7 +692,7 @@ self.onmessage = async (e) => {
       row.append(chip);
     });
 
-    hero.append(logo, el('h1', '', 'What can I help you with?'), el('p', 'hero-sub', 'Ask anything, attach files, or start with an idea below.'), row);
+    hero.append(logo, el('h1', '', 'What can I help you with?'), el('p', 'hero-sub', 'Ask anything, send images, talk to Qrox, or start with an idea below.'), row);
     els.thread.append(hero);
   }
 
@@ -474,22 +701,20 @@ self.onmessage = async (e) => {
     const bubble = el('div', `msg ${m.role}`);
 
     if (m.role === 'user') {
-      bubble.textContent = m.text;
-      (m.media || []).filter((f) => f.kind === 'image').forEach((f) => {
-        const img = el('img', 'user-img');
-        img.src = `data:${f.mediaType};base64,${f.data}`;
-        img.alt = f.name || 'Your image';
-        bubble.append(img);
-      });
+      if (m.thumbs?.length) {
+        const row = el('div', 'thumbs');
+        m.thumbs.forEach((src) => {
+          const img = el('img');
+          img.src = src;
+          img.alt = 'Image you sent';
+          row.append(img);
+        });
+        bubble.append(row);
+      }
+      if (m.text) bubble.append(m.text);
       if (m.files && m.files.length) bubble.append(el('div', 'msg-files', 'Attached: ' + m.files.join(', ')));
     } else {
       bubble.innerHTML = renderMarkdown(m.text);
-      if (m.image) {
-        const img = el('img', 'gen-image');
-        img.src = m.image;
-        img.alt = 'Image created by Qrox';
-        bubble.append(img);
-      }
       decorateCode(bubble);
     }
 
@@ -510,10 +735,8 @@ self.onmessage = async (e) => {
       const down = actionButton('down', 'Not a good answer', () => setFeedback(m, 'down'));
       up.classList.toggle('on', m.feedback === 'up');
       down.classList.toggle('on', m.feedback === 'down');
-      const reading = speakingMsg === m;
-      const speakBtn = actionButton(reading ? 'stop' : 'speak', reading ? 'Stop reading' : 'Read aloud', () => toggleSpeak(m));
-      speakBtn.classList.toggle('on', reading);
-      bar.append(up, down, actionButton('translate', 'Translate', () => translateText(m.text || '')), speakBtn);
+      bar.append(up, down, actionButton('speak', 'Read aloud', () => toggleSpeak(m.text || '')));
+      bar.append(actionButton('translate', 'Translate', () => translateText(m.text || '')));
       if (index === msgs.length - 1) {
         bar.append(actionButton('regen', 'Regenerate', () => regenerate()));
         bar.append(actionButton('check', 'Double-check this answer', () => doubleCheck()));
@@ -568,7 +791,7 @@ self.onmessage = async (e) => {
     if (els.roleLabel.textContent === label) return;
     els.roleLabel.textContent = label;
     els.roleLabel.classList.remove('flash');
-    void els.roleLabel.offsetWidth; // restart the fade
+    void els.roleLabel.offsetWidth; // restarts the fade
     els.roleLabel.classList.add('flash');
   }
 
@@ -607,12 +830,13 @@ self.onmessage = async (e) => {
   }
 
   function updateSendState() {
+    const chat = currentChat();
+    const locked = !user || Boolean(chat?.ended) || Boolean(profile?.blockedInMs);
+    els.input.disabled = locked;
+    els.input.placeholder = !user ? 'Sign in to chat' : chat?.ended ? 'This conversation has ended' : 'Ask anything';
     els.send.classList.toggle('stop', busy);
     els.send.setAttribute('aria-label', busy ? 'Stop reply' : 'Send message');
-    const locked = Boolean(currentChat()?.ended);
-    els.input.disabled = locked;
-    els.input.placeholder = locked ? 'This conversation has ended. Start a new chat.' : 'Ask anything';
-    els.send.disabled = locked || (!busy && !els.input.value.trim() && pending.length === 0);
+    els.send.disabled = busy ? false : locked || (!els.input.value.trim() && pending.length === 0);
   }
 
   function autoResize() {
@@ -623,7 +847,6 @@ self.onmessage = async (e) => {
   function syncToggles() {
     els.search.setAttribute('aria-pressed', String(prefs.search));
     els.code.setAttribute('aria-pressed', String(prefs.code));
-    els.imageToggle.setAttribute('aria-pressed', String(prefs.image));
   }
 
   // ---------- Sending ----------
@@ -635,17 +858,25 @@ self.onmessage = async (e) => {
       : { role: 'assistant', content: m.text }));
   }
 
-  // send() takes either the composer (no options) or a message the app writes itself (options.text).
+  // send() takes the composer (no options) or a message the app writes itself (options.text).
   async function send(options = {}) {
-    if (currentChat()?.ended) {
-      if (voiceState.active) stopVoiceMode();
-      return;
-    }
     if (busy) return;
     const fromComposer = options.text === undefined;
     const text = (fromComposer ? els.input.value : options.text).trim();
     const files = fromComposer ? pending : [];
     if (!text && files.length === 0) return;
+    if (!user) {
+      showToast('Sign in to chat with Qrox.', 2600);
+      return;
+    }
+    if (currentChat()?.ended) {
+      showToast('This conversation has ended. Start a new chat.', 2600);
+      return;
+    }
+    if (profile?.blockedInMs) {
+      showToast('Chats are paused for a while after repeated abusive messages.', 3000);
+      return;
+    }
 
     if (fromComposer) {
       const remembered = text.match(MEMORY_RE);
@@ -657,7 +888,7 @@ self.onmessage = async (e) => {
 
     const key = draftKey();
     if (!currentId) {
-      const created = { id: newId(), title: (text || files[0].name).slice(0, 60), workspace: prefs.workspace, messages: [] };
+      const created = { id: newId(), title: (text || files[0].name).slice(0, 60), workspace: prefs.workspace, pinned: false, ended: false, messages: [] };
       chats.unshift(created);
       currentId = created.id;
     }
@@ -675,6 +906,7 @@ self.onmessage = async (e) => {
       text,
       mode,
       files: files.map((f) => f.name),
+      thumbs: files.filter((f) => f.thumb).map((f) => f.thumb),
       modelText,
       media: mediaFiles.map(({ kind, name, mediaType, data }) => ({ kind, name, mediaType, data })),
     });
@@ -687,7 +919,6 @@ self.onmessage = async (e) => {
       autoResize();
       renderAttachments();
     }
-    if (fromComposer && prefs.image) return makeImage(chat, text || 'an image', startIndex);
     await streamReply(chat, startIndex, mode);
   }
 
@@ -712,9 +943,8 @@ self.onmessage = async (e) => {
     let completed = false;
 
     try {
-      const res = await fetch('/api/chat', {
+      const res = await api('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: payload,
           mode: mode === 'auto' && prefs.code ? 'code' : mode,
@@ -729,7 +959,7 @@ self.onmessage = async (e) => {
         throw new Error(info.error || `Request failed (${res.status}).`);
       }
       reply.by = res.headers.get('X-Qrox-Role') || '';
-      if (res.headers.get('X-Qrox-Status') === 'ended') chat.ended = true;
+      if (res.headers.get('X-Qrox-Ended')) chat.ended = true;
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -762,21 +992,24 @@ self.onmessage = async (e) => {
       saveChats();
       renderSidebar();
       updateSendState();
-      onReplyFinished(reply, chat);
+      renderNotice();
+      loadProfile();
       // Wait for the star's pop to finish before rebuilding the thread, so the animation isn't cut off.
       setTimeout(() => { if (!busy) renderThread(); }, 1300);
     }
 
-    if (completed) loadFollowups(chat, reply);
+    if (completed) {
+      if (talking || prefs.voiceReplies) speakReply(reply.text);
+      if (reply.by !== 'safety' && !chat.ended) loadFollowups(chat, reply);
+    }
   }
 
   async function loadFollowups(chat, reply) {
     const index = chat.messages.indexOf(reply);
     const question = chat.messages[index - 1]?.text || '';
     try {
-      const res = await fetch('/api/followups', {
+      const res = await api('/api/followups', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, answer: reply.text }),
       });
       const data = await res.json();
@@ -858,6 +1091,7 @@ self.onmessage = async (e) => {
     restoreDraft();
     renderSidebar();
     renderThread();
+    renderNotice();
   }
 
   function newChatAction() {
@@ -875,6 +1109,7 @@ self.onmessage = async (e) => {
     restoreDraft();
     renderSidebar();
     renderThread();
+    renderNotice();
     scrollToBottom();
     if (isMobile()) setSidebar(false);
   }
@@ -887,12 +1122,7 @@ self.onmessage = async (e) => {
     chats = chats.filter((c) => c.id !== id);
     delete drafts[id];
     persistDrafts();
-    if (currentId === id) {
-      currentId = null;
-      pending = [];
-      renderAttachments();
-      restoreDraft();
-    }
+    if (currentId === id) resetToNewChat();
     saveChats();
     renderSidebar();
     renderThread();
@@ -910,6 +1140,18 @@ self.onmessage = async (e) => {
     }
   }
 
+  function togglePin(id) {
+    const chat = chats.find((c) => c.id === id);
+    if (!chat) return;
+    chat.pinned = !chat.pinned;
+    saveChats();
+    renderSidebar();
+  }
+
+  function safeFileName(title) {
+    return title.replace(/[\\/:*?"<>|]+/g, '').trim().slice(0, 60) || 'qrox-chat';
+  }
+
   function exportChat() {
     const chat = currentChat();
     if (!chat || chat.messages.length === 0) {
@@ -925,7 +1167,7 @@ self.onmessage = async (e) => {
     const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/markdown' }));
     const link = el('a');
     link.href = url;
-    link.download = `${(chat.title.replace(/[\\/:*?"<>|]+/g, '').trim().slice(0, 60)) || 'qrox-chat'}.md`;
+    link.download = `${safeFileName(chat.title)}.md`;
     document.body.append(link);
     link.click();
     link.remove();
@@ -964,7 +1206,7 @@ self.onmessage = async (e) => {
     }
   }
 
-  // ---------- Files ----------
+  // ---------- Files and images ----------
   function toBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -974,12 +1216,35 @@ self.onmessage = async (e) => {
     });
   }
 
+  // A small preview of an image, so the chat can show what you sent.
+  function makeThumb(file) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        const scale = Math.min(1, 240 / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve('');
+      };
+      img.src = url;
+    });
+  }
+
   async function readFile(file) {
     if (file.size > MAX_FILE_BYTES) throw new Error(`${file.name} is larger than 10 MB.`);
 
     if (IMAGE_TYPES.includes(file.type)) {
       if (file.size > MAX_IMAGE_BYTES) throw new Error(`${file.name} is larger than 2.5 MB. Please use a smaller image.`);
-      return { name: file.name, kind: 'image', mediaType: file.type, data: await toBase64(file) };
+      const data = await toBase64(file);
+      return { name: file.name, kind: 'image', mediaType: file.type, data, thumb: await makeThumb(file) };
     }
     if (file.type === 'application/pdf') {
       return { name: file.name, kind: 'pdf', mediaType: 'application/pdf', data: await toBase64(file) };
@@ -1112,7 +1377,7 @@ self.onmessage = async (e) => {
     worker.postMessage(code);
   }
 
-  // ---------- Memory and settings dialogs ----------
+  // ---------- Dialogs ----------
   function openMemory() {
     renderMemories();
     if (!els.memory.open) els.memory.showModal();
@@ -1122,336 +1387,10 @@ self.onmessage = async (e) => {
     els.personality.value = prefs.personality;
     els.level.value = prefs.level;
     els.memoryOn.checked = prefs.memoryOn;
-    populateVoices();
+    els.voiceReplies.checked = prefs.voiceReplies;
+    els.rate.value = String(prefs.rate || 1);
+    if (voices.length) els.voiceSelect.value = prefs.voiceName || els.voiceSelect.value;
     if (!els.settings.open) els.settings.showModal();
-  }
-
-  // ---------- Keyboard and drag and drop ----------
-  let dragDepth = 0;
-  const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
-
-  // ---------- Voice input ----------
-  // Uses the browser's built-in speech recognition. The button is hidden where it isn't supported.
-  function setupVoice() {
-    const SpeechApi = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechApi) {
-      els.mic.classList.add('hidden');
-      return;
-    }
-    const recognition = new SpeechApi();
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = navigator.language || 'en-US';
-
-    let base = '';
-    let listening = false;
-
-    recognition.onresult = (e) => {
-      const transcript = Array.from(e.results).map((r) => r[0].transcript).join('');
-      els.input.value = (base ? base + ' ' : '') + transcript;
-      autoResize();
-      updateSendState();
-      storeDraft();
-    };
-    recognition.onend = () => {
-      listening = false;
-      els.mic.classList.remove('active');
-    };
-    els.mic.addEventListener('click', () => {
-      if (listening) {
-        recognition.stop();
-        return;
-      }
-      base = els.input.value.trim();
-      try {
-        recognition.start();
-        listening = true;
-        els.mic.classList.add('active');
-      } catch {
-        // Recognition is already running.
-      }
-    });
-  }
-
-  // ---------- Website builder ----------
-  let builtSite = '';
-
-  function openBuilder() {
-    if (!els.builder.open) els.builder.showModal();
-  }
-
-  async function readAll(res) {
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let out = '';
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      out += decoder.decode(value, { stream: true });
-    }
-    return out + decoder.decode();
-  }
-
-  async function buildSite() {
-    const name = els.siteName.value.trim() || 'My site';
-    const description = els.siteDesc.value.trim();
-    if (!description) {
-      showToast('Describe the website first.');
-      return;
-    }
-    els.buildGo.disabled = true;
-    els.buildStatus.textContent = 'Building your website…';
-    const prompt = 'Build a complete, single-file, responsive website named "' + name + '". ' +
-      'Put all HTML, CSS and JavaScript in one file with no external files. Description: ' + description + '. ' +
-      'Reply with one ```html code block containing the full file, then one short sentence about what you built.';
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [{ role: 'user', content: prompt }],
-          mode: 'code',
-          settings: { personality: 'balanced', level: 'auto' },
-          memories: [],
-        }),
-      });
-      if (!res.ok) {
-        const info = await res.json().catch(() => ({}));
-        throw new Error(info.error || 'The website could not be built.');
-      }
-      const text = await readAll(res);
-      const match = text.match(/```html\s*([\s\S]*?)```/i);
-      if (!match) throw new Error(text.slice(0, 200) || 'No website code came back. Try describing it differently.');
-      builtSite = match[1].trim();
-      els.sitePreview.srcdoc = builtSite;
-      els.siteDownload.disabled = false;
-      els.siteCode.disabled = false;
-      els.buildStatus.textContent = 'Done. Check the preview below.';
-    } catch (err) {
-      els.buildStatus.textContent = err.message;
-    } finally {
-      els.buildGo.disabled = false;
-    }
-  }
-
-  function downloadSite() {
-    const url = URL.createObjectURL(new Blob([builtSite], { type: 'text/html' }));
-    const link = el('a');
-    link.href = url;
-    link.download = (els.siteName.value.trim() || 'site').replace(/[^\w-]+/g, '-').toLowerCase() + '.html';
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
-  // ---------- Image creation ----------
-  async function makeImage(chat, prompt, animateFrom) {
-    const reply = { role: 'assistant', text: '', by: 'creative', feedback: null, followups: [] };
-    chat.messages.push(reply);
-    busy = true;
-    controller = new AbortController();
-    updateSendState();
-    renderThread(animateFrom);
-
-    const turn = els.thread.lastElementChild;
-    const star = startStar(turn);
-    try {
-      const res = await fetch('/api/image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
-        signal: controller.signal,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'The image could not be created.');
-      reply.text = 'Here is your image.';
-      reply.image = data.image;
-    } catch (err) {
-      reply.text = err.name === 'AbortError' ? '*Stopped.*' : `⚠️ ${err.message}`;
-    } finally {
-      busy = false;
-      controller = null;
-      finishStar(star);
-      saveChats();
-      renderSidebar();
-      updateSendState();
-      setTimeout(() => { if (!busy) renderThread(); }, 1300);
-      if (voiceState.active) startListening();
-    }
-  }
-
-  // ---------- Read aloud and voice mode ----------
-  const hasTTS = 'speechSynthesis' in window;
-  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const voiceState = { active: false, rec: null, phase: 'idle' };
-  let speakingMsg = null;
-
-  // Turns Markdown into plain text, so the voice doesn't read symbols or code.
-  function plainText(md) {
-    return md
-      .replace(/```[\s\S]*?```/g, ' (code omitted) ')
-      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-      .replace(/`([^`]+)`/g, '$1')
-      .replace(/[#*_>~|-]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  function pickVoice() {
-    if (!hasTTS) return null;
-    const voices = speechSynthesis.getVoices();
-    return voices.find((v) => v.name === prefs.voice)
-      || voices.find((v) => /^en/i.test(v.lang))
-      || voices[0]
-      || null;
-  }
-
-  function populateVoices() {
-    if (!hasTTS || !els.voice) return;
-    const voices = speechSynthesis.getVoices();
-    els.voice.innerHTML = '';
-    const auto = el('option', '', 'Automatic (English)');
-    auto.value = '';
-    els.voice.append(auto);
-    for (const v of voices) {
-      const option = el('option', '', `${v.name} (${v.lang})`);
-      option.value = v.name;
-      els.voice.append(option);
-    }
-    els.voice.value = prefs.voice || '';
-  }
-
-  // Reads text out loud. Long replies are split into sentences, which keeps speech reliable in every browser.
-  function speak(md, onDone) {
-    if (!hasTTS) {
-      showToast('Read aloud is not supported in this browser.', 3000);
-      if (onDone) onDone();
-      return;
-    }
-    speechSynthesis.cancel();
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      if (onDone) onDone();
-    };
-    const parts = (plainText(md).slice(0, 4000).match(/[^.!?]+[.!?]*/g) || []).map((p) => p.trim()).filter(Boolean);
-    if (parts.length === 0) {
-      finish();
-      return;
-    }
-    const voice = pickVoice();
-    parts.forEach((part, i) => {
-      const utterance = new SpeechSynthesisUtterance(part);
-      if (voice) {
-        utterance.voice = voice;
-        utterance.lang = voice.lang;
-      }
-      if (i === parts.length - 1) {
-        utterance.onend = finish;
-        utterance.onerror = finish;
-      }
-      speechSynthesis.speak(utterance);
-    });
-  }
-
-  function stopSpeaking() {
-    if (hasTTS) speechSynthesis.cancel();
-    speakingMsg = null;
-  }
-
-  function toggleSpeak(m) {
-    const wasThis = speakingMsg === m;
-    stopSpeaking();
-    if (!wasThis) {
-      speakingMsg = m;
-      speak(m.text || '', () => {
-        if (speakingMsg === m) speakingMsg = null;
-        renderThread();
-      });
-    }
-    renderThread();
-  }
-
-  function setVoicePhase(phase) {
-    voiceState.phase = phase;
-    const labels = { listening: 'Listening…', thinking: 'Thinking…', speaking: 'Speaking…' };
-    els.voiceState.textContent = labels[phase] || '';
-    els.voiceState.classList.toggle('hidden', !labels[phase]);
-  }
-
-  // Talk mode: listen, send what was said, read the reply aloud, then listen again.
-  function startVoiceMode() {
-    if (!SpeechRec || !hasTTS) {
-      showToast('Voice mode needs Chrome, Edge or Safari.', 3000);
-      return;
-    }
-    voiceState.active = true;
-    els.voiceBtn.setAttribute('aria-pressed', 'true');
-    els.form.classList.add('listening');
-    startListening();
-  }
-
-  function stopVoiceMode() {
-    voiceState.active = false;
-    if (voiceState.rec) {
-      try { voiceState.rec.abort(); } catch { /* already stopped */ }
-    }
-    stopSpeaking();
-    els.voiceBtn.setAttribute('aria-pressed', 'false');
-    els.form.classList.remove('listening');
-    setVoicePhase('idle');
-  }
-
-  function startListening() {
-    if (!voiceState.active) return;
-    if (busy) {
-      setTimeout(startListening, 400);
-      return;
-    }
-    const rec = new SpeechRec();
-    voiceState.rec = rec;
-    rec.continuous = false;
-    rec.interimResults = false;
-    rec.lang = navigator.language || 'en-US';
-
-    rec.onresult = (e) => {
-      const text = e.results[0]?.[0]?.transcript?.trim();
-      if (!text) return;
-      setVoicePhase('thinking');
-      send({ text });
-    };
-    rec.onend = () => {
-      if (voiceState.active && voiceState.phase === 'listening') {
-        setTimeout(startListening, 300);
-      }
-    };
-    rec.onerror = (e) => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        showToast('Microphone access was blocked. Allow it in your browser settings.', 4000);
-        stopVoiceMode();
-      }
-    };
-    try {
-      rec.start();
-      setVoicePhase('listening');
-    } catch {
-      stopVoiceMode();
-    }
-  }
-
-  function onReplyFinished(reply, chat) {
-    if (!voiceState.active) return;
-    if (chat.ended || !reply.text || reply.text.startsWith('*Stopped')) {
-      stopVoiceMode();
-      return;
-    }
-    setVoicePhase('speaking');
-    speak(reply.text, () => {
-      if (voiceState.active) startListening();
-    });
   }
 
   // ---------- Events ----------
@@ -1501,6 +1440,8 @@ self.onmessage = async (e) => {
     syncToggles();
   });
 
+  els.mic.addEventListener('click', () => (talking ? stopTalk() : startTalk()));
+
   els.toggleSidebar.addEventListener('click', () => setSidebar(els.app.classList.contains('collapsed')));
   els.collapseBtn.addEventListener('click', () => setSidebar(false));
   els.searchNav.addEventListener('click', () => {
@@ -1520,29 +1461,57 @@ self.onmessage = async (e) => {
   els.jump.addEventListener('click', () => scrollToBottom(true));
   els.messages.addEventListener('scroll', updateJump, { passive: true });
 
+  els.signinBtn.addEventListener('click', async () => {
+    try {
+      await signInWithPopup(auth, new GoogleAuthProvider());
+    } catch {
+      showToast('Sign-in was cancelled or failed.', 2600);
+    }
+  });
+  els.signOutBtn.addEventListener('click', () => signOut(auth).catch(() => showToast('Could not sign out. Try again.')));
+  els.ageBtn.addEventListener('click', openAge);
+  els.noticeBtn.addEventListener('click', openAge);
+  els.closeAge.addEventListener('click', () => els.ageDialog.close());
+
+  els.ageForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!user) return;
+    els.ageResult.textContent = 'Saving…';
+    try {
+      const res = await api('/api/age', { method: 'POST', body: JSON.stringify({ dob: els.dob.value }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        els.ageResult.textContent = data.error || 'Could not save your age.';
+        return;
+      }
+      els.ageResult.textContent = `Your age group: ${AGE_LABELS[data.ageTier]}. If that is wrong, use "Report a wrong age".`;
+      await loadProfile();
+    } catch {
+      els.ageResult.textContent = 'Could not reach Qrox. Check your connection and try again.';
+    }
+  });
+
   els.closeShortcuts.addEventListener('click', () => els.shortcuts.close());
   els.closeSettings.addEventListener('click', () => els.settings.close());
   els.closeMemory.addEventListener('click', () => els.memory.close());
   els.labClose.addEventListener('click', () => els.lab.close());
-  for (const dialog of [els.shortcuts, els.settings, els.memory, els.lab]) {
+  for (const dialog of [els.shortcuts, els.settings, els.memory, els.lab, els.ageDialog]) {
     dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
   }
 
-  els.personality.addEventListener('change', () => {
-    prefs.personality = els.personality.value;
-    savePrefs();
-  });
-  els.level.addEventListener('change', () => {
-    prefs.level = els.level.value;
-    savePrefs();
-  });
-  els.memoryOn.addEventListener('change', () => {
-    prefs.memoryOn = els.memoryOn.checked;
-    savePrefs();
-  });
+  els.personality.addEventListener('change', () => { prefs.personality = els.personality.value; savePrefs(); });
+  els.level.addEventListener('change', () => { prefs.level = els.level.value; savePrefs(); });
+  els.memoryOn.addEventListener('change', () => { prefs.memoryOn = els.memoryOn.checked; savePrefs(); });
+  els.voiceReplies.addEventListener('change', () => { prefs.voiceReplies = els.voiceReplies.checked; savePrefs(); });
+  els.voiceSelect.addEventListener('change', () => { prefs.voiceName = els.voiceSelect.value; savePrefs(); });
+  els.rate.addEventListener('input', () => { prefs.rate = Number(els.rate.value); savePrefs(); });
+
   els.wipeData.addEventListener('click', () => {
-    if (!window.confirm('Delete all chats, memories, drafts and settings from this browser? This cannot be undone.')) return;
-    Object.values(KEYS).forEach((key) => localStorage.removeItem(key));
+    if (!window.confirm('Delete the chats, memories, drafts and settings stored in this browser? Your account is not affected.')) return;
+    for (const name of ['chats', 'drafts', 'memories', 'workspaces']) {
+      localStorage.removeItem(scopedKey(name));
+    }
+    localStorage.removeItem(KEYS.prefs);
     location.reload();
   });
 
@@ -1552,6 +1521,7 @@ self.onmessage = async (e) => {
     els.memoryInput.value = '';
     renderMemories();
   });
+
   els.clearMemories.addEventListener('click', () => {
     if (!window.confirm('Delete all saved memories?')) return;
     memories = [];
@@ -1559,27 +1529,6 @@ self.onmessage = async (e) => {
     renderMemories();
   });
 
-  els.voiceBtn.addEventListener('click', () => (voiceState.active ? stopVoiceMode() : startVoiceMode()));
-  els.imageToggle.addEventListener('click', () => {
-    prefs.image = !prefs.image;
-    savePrefs();
-    syncToggles();
-  });
-  els.voice.addEventListener('change', () => {
-    prefs.voice = els.voice.value;
-    savePrefs();
-  });
-  els.builderNav.addEventListener('click', openBuilder);
-  els.closeBuilder.addEventListener('click', () => els.builder.close());
-  els.builder.addEventListener('click', (e) => {
-    if (e.target === els.builder) els.builder.close();
-  });
-  els.buildGo.addEventListener('click', buildSite);
-  els.siteDownload.addEventListener('click', downloadSite);
-  els.siteCode.addEventListener('click', () => {
-    els.builder.close();
-    openLab(builtSite, 'html');
-  });
   els.labRun.addEventListener('click', runLab);
   els.labCopy.addEventListener('click', () => copyText(els.labCode.value, 'Code copied'));
   els.labCode.addEventListener('keydown', (e) => {
@@ -1590,7 +1539,10 @@ self.onmessage = async (e) => {
     els.labCode.selectionStart = els.labCode.selectionEnd = start + 2;
   });
 
-  // Drag files anywhere on the page to attach them.
+  // Drag images or files anywhere on the page to attach them.
+  let dragDepth = 0;
+  const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+
   window.addEventListener('dragenter', (e) => {
     if (!hasFiles(e)) return;
     dragDepth += 1;
@@ -1625,7 +1577,8 @@ self.onmessage = async (e) => {
       setSidebar(els.app.classList.contains('collapsed'));
     } else if (e.key === 'Escape') {
       if (document.querySelector('dialog[open]')) return; // the dialog handles Escape itself
-      if (busy) stopReply();
+      if (speaking) stopSpeaking();
+      else if (busy) stopReply();
       else if (isMobile()) setSidebar(false);
     } else if (!typing && !mod && e.key === '/') {
       e.preventDefault();
@@ -1636,17 +1589,30 @@ self.onmessage = async (e) => {
     }
   });
 
-  // ---------- Start ----------
-  chats = loadJson(KEYS.chats, []);
-  if (!Array.isArray(chats)) chats = [];
-  memories = loadJson(KEYS.memories, []);
-  workspaces = loadJson(KEYS.workspaces, []);
-  drafts = loadJson(KEYS.drafts, {});
-  prefs = { ...DEFAULT_PREFS, ...loadJson(KEYS.prefs, {}) };
+  // Signing in or out switches to that account's chats on this device.
+  onAuthStateChanged(auth, async (signedIn) => {
+    user = signedIn;
+    profile = null;
+    loadUserData();
+    renderWorkspaces();
+    renderSidebar();
+    renderThread();
+    restoreDraft();
+    renderAccount();
+    if (user) {
+      await loadProfile();
+      if (profile?.needsAge && !ageAsked) {
+        ageAsked = true;
+        openAge();
+      }
+    }
+  });
 
-  setupVoice();
-  populateVoices();
-  if (hasTTS) speechSynthesis.onvoiceschanged = populateVoices;
+  // ---------- Start ----------
+  prefs = { ...DEFAULT_PREFS, ...loadJson(KEYS.prefs, {}) };
+  loadUserData();
+  loadVoices();
+  if ('speechSynthesis' in window) speechSynthesis.addEventListener('voiceschanged', loadVoices);
   setSidebar(!isMobile());
   syncToggles();
   renderWorkspaces();
@@ -1654,6 +1620,7 @@ self.onmessage = async (e) => {
   renderSidebar();
   renderThread();
   renderAttachments();
+  renderAccount();
   updateSendState();
   scrollToBottom();
 })();
