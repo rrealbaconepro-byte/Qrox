@@ -4,12 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Qrox</title>
-  <meta name="description" content="Qrox is an AI assistant for chat, writing, code, files, web search and memory.">
+  <meta name="description" content="Qrox is an AI assistant for chat, writing, code, images, voice, files, web search and memory.">
   <meta name="theme-color" content="#000000">
   <link rel="icon" href="/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <section class="signin hidden" id="signin" aria-labelledby="signinTitle">
+    <div class="signin-card">
+      <img src="/logo.svg" alt="" width="72" height="72">
+      <h1 id="signinTitle">Sign in to Qrox</h1>
+      <p>Your chats, credits and settings are saved to your account.</p>
+      <button class="primary wide" id="signinBtn" type="button">Continue with Google</button>
+      <p class="fine">Under 13? Ask a parent or guardian before you create an account.</p>
+    </div>
+  </section>
+
   <div class="app collapsed" id="app">
     <aside class="sidebar" aria-label="Sidebar">
       <div class="side-top">
@@ -25,19 +35,19 @@
       </div>
 
       <nav class="side-nav" aria-label="Main">
-        <button class="nav-item" id="newChat" type="button">
+        <button class="nav-item" id="newChat" type="button" style="--i: 0">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
           <span>New chat</span>
         </button>
-        <button class="nav-item" id="labNav" type="button">
+        <button class="nav-item" id="labNav" type="button" style="--i: 1">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></svg>
           <span>Code Lab</span>
         </button>
-        <button class="nav-item" id="memoryNav" type="button">
+        <button class="nav-item" id="memoryNav" type="button" style="--i: 2">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/></svg>
           <span>Memory</span>
         </button>
-        <button class="nav-item" id="settingsNav" type="button">
+        <button class="nav-item" id="settingsNav" type="button" style="--i: 3">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
           <span>Settings</span>
         </button>
@@ -52,11 +62,23 @@
       <div class="side-section"><span>Chats</span></div>
       <input class="search-input" id="chatSearch" type="search" placeholder="Search chats" aria-label="Search chats">
       <nav class="chat-list" id="chatList" aria-label="Chats"></nav>
+
+      <div class="account hidden" id="account">
+        <div class="account-row"><strong id="creditsText">Loading…</strong><span id="ageLabel"></span></div>
+        <div class="credit-bar"><span id="creditBar"></span></div>
+        <p class="refill" id="refill"></p>
+        <div class="account-row">
+          <button class="ghost small" id="ageBtn" type="button">Age</button>
+          <button class="ghost small" id="signOutBtn" type="button">Sign out</button>
+        </div>
+      </div>
     </aside>
 
     <div class="scrim" id="scrim" aria-hidden="true"></div>
 
     <div class="main">
+      <div class="ambient" aria-hidden="true"></div>
+
       <header class="topbar">
         <button class="icon-btn" id="toggleSidebar" type="button" aria-label="Show or hide sidebar" title="Sidebar (Ctrl/⌘ + B)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
@@ -79,11 +101,15 @@
       </button>
 
       <div class="composer-wrap">
+        <div class="notice hidden" id="notice">
+          <span id="noticeText"></span>
+          <button class="ghost small" id="noticeBtn" type="button">Confirm age</button>
+        </div>
         <form class="composer" id="composer" autocomplete="off">
           <div class="attachments hidden" id="attachments"></div>
           <textarea id="input" rows="1" placeholder="Ask anything" aria-label="Message Qrox"></textarea>
           <div class="composer-row">
-            <button class="icon-btn" id="attachBtn" type="button" aria-label="Attach files" title="Attach files">
+            <button class="icon-btn" id="attachBtn" type="button" aria-label="Attach images or files" title="Attach images or files">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
             </button>
             <input type="file" id="fileInput" multiple hidden
@@ -92,7 +118,8 @@
             <button class="pill" id="codeToggle" type="button" aria-pressed="false" title="Ask Code Bot to write and explain code">Code Bot</button>
             <span class="grow"></span>
             <span class="role-label" id="roleLabel" aria-live="polite">Auto</span>
-            <button class="icon-btn" id="micBtn" type="button" aria-label="Voice input" title="Voice input">
+            <span class="wave hidden" id="wave" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+            <button class="icon-btn" id="micBtn" type="button" aria-label="Talk to Qrox (hands-free)" title="Talk to Qrox (hands-free)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
             </button>
             <button class="send" id="sendBtn" type="submit" aria-label="Send message" disabled>
@@ -104,7 +131,7 @@
         <p class="footnote">Qrox can make mistakes. Check important information.</p>
       </div>
 
-      <div class="drop-hint" aria-hidden="true">Drop files to attach them</div>
+      <div class="drop-hint" aria-hidden="true">Drop images or files to attach them</div>
     </div>
   </div>
 
@@ -157,27 +184,50 @@
         <input type="checkbox" id="memoryOn">
         <span>Let Qrox use your saved memories</span>
       </label>
+      <label class="check">
+        <input type="checkbox" id="voiceReplies">
+        <span>Qrox reads its replies aloud</span>
+      </label>
+      <label class="field">
+        <span>Voice</span>
+        <select id="voiceSelect"></select>
+      </label>
+      <label class="field">
+        <span>Speed</span>
+        <input type="range" id="rate" min="0.7" max="1.4" step="0.05">
+      </label>
+      <div class="costs">
+        <span>Credit costs</span>
+        <ul>
+          <li>Normal reply: 34 credits</li>
+          <li>Code Bot request: 500 credits</li>
+          <li>Reply of 3,000 characters or more: +1,000 credits</li>
+          <li>Image creation: 90 credits (coming later)</li>
+          <li>Small file: 80 credits, big file: 2,000 credits (coming later)</li>
+        </ul>
+      </div>
       <div class="danger-zone">
-        <p>Everything is stored in this browser. Deleting it removes all chats, memories, drafts and settings here.</p>
-        <button class="danger" id="wipeData" type="button">Delete all my data</button>
+        <p>Chats, memories and settings are stored in this browser. Deleting them here does not delete your account.</p>
+        <button class="danger" id="wipeData" type="button">Delete local data</button>
       </div>
     </div>
   </dialog>
 
-  <dialog id="memoryDialog" aria-labelledby="memoryTitle">
-    <div class="panel">
+  <dialog id="ageDialog" aria-labelledby="ageTitle">
+    <form class="panel" id="ageForm">
       <div class="panel-head">
-        <h2 id="memoryTitle">Memory</h2>
-        <button class="icon-btn" id="closeMemory" type="button" aria-label="Close">×</button>
+        <h2 id="ageTitle">Confirm your age</h2>
+        <button class="icon-btn" id="closeAge" type="button" aria-label="Close">×</button>
       </div>
-      <p class="muted">Qrox uses these when memory is on. Type "remember that…" in a chat to add one, or add one below. Delete any you no longer want.</p>
-      <form class="memory-form" id="memoryForm">
-        <input id="memoryInput" type="text" maxlength="300" placeholder="For example: I prefer short answers" aria-label="New memory">
-        <button class="primary" type="submit">Add</button>
-      </form>
-      <ul class="memory-list" id="memoryList"></ul>
-      <button class="danger" id="clearMemories" type="button">Clear all memories</button>
-    </div>
+      <p class="muted">Enter your date of birth. Qrox uses it only to choose settings for your age group. Qrox never asks for a photo of your face or an ID.</p>
+      <label class="field">
+        <span>Date of birth</span>
+        <input type="date" id="dob" required>
+      </label>
+      <button class="primary" type="submit">Save my age group</button>
+      <p id="ageResult" class="muted" aria-live="polite"></p>
+      <a id="reportAge" class="ghost-link" href="#">Report a wrong age</a>
+    </form>
   </dialog>
 
   <dialog class="lab" id="lab" aria-labelledby="labTitle">
@@ -203,8 +253,24 @@
     </div>
   </dialog>
 
+  <dialog id="memoryDialog" aria-labelledby="memoryTitle">
+    <div class="panel">
+      <div class="panel-head">
+        <h2 id="memoryTitle">Memory</h2>
+        <button class="icon-btn" id="closeMemory" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="muted">Qrox uses these when memory is on. Type "remember that…" in a chat to add one, or add one below.</p>
+      <form class="memory-form" id="memoryForm">
+        <input id="memoryInput" type="text" maxlength="300" placeholder="For example: I prefer short answers" aria-label="New memory">
+        <button class="primary" type="submit">Add</button>
+      </form>
+      <ul class="memory-list" id="memoryList"></ul>
+      <button class="danger" id="clearMemories" type="button">Clear all memories</button>
+    </div>
+  </dialog>
+
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
-  <script src="/app.js"></script>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>
