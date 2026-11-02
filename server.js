@@ -369,6 +369,8 @@ function summarize(user, now) {
     credits: user.credits,
     ageTier: user.dob ? user.ageTier : 'unknown',
     needsAge: !user.dob,
+    username: user.username || null,
+    email: user.email || null,
     refillInMs: user.refillAt ? Math.max(0, user.refillAt - now) : 0,
     blockedInMs: user.blockedUntil > now ? user.blockedUntil - now : 0,
   };
@@ -481,6 +483,7 @@ async function requireUser(req, res, next) {
   try {
     const decoded = await admin.auth().verifyIdToken(match[1]);
     req.uid = decoded.uid;
+    req.email = decoded.email || '';
   } catch {
     return res.status(401).json({ error: 'Your sign-in has expired. Please sign in again.' });
   }
@@ -502,6 +505,50 @@ app.get('/api/me', requireUser, async (req, res) => {
     res.json(await updateProfile(req.uid, (user, now) => summarize(user, now)));
   } catch (err) {
     console.error('Could not load profile:', err.message);
+    res.status(500).json({ error: 'Account storage is unavailable right now.' });
+  }
+});
+
+// Usernames sign in through a hidden account email (username@users.qrox.bbroot.com). Nothing is ever sent there.
+const ACCOUNT_DOMAIN = 'users.qrox.bbroot.com';
+const RESERVED_USERNAMES = new Set(['admin', 'administrator', 'qrox', 'bbroot', 'support', 'moderator', 'mod', 'root', 'system', 'help']);
+const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Sign-up: saves the username, birthday and optional email from the sign-up form.
+// The username must match the account the visitor just created, so nobody can claim someone else's name.
+app.post('/api/profile', requireUser, async (req, res) => {
+  const username = typeof req.body?.username === 'string' ? req.body.username.trim().toLowerCase() : '';
+  const dob = typeof req.body?.dob === 'string' ? req.body.dob.trim() : '';
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const now = Date.now();
+
+  if (!USERNAME_RE.test(username) || RESERVED_USERNAMES.has(username)) {
+    return res.status(400).json({ error: 'Usernames are 3 to 20 letters, numbers or underscores, and some names are reserved.' });
+  }
+  const [accountName, accountDomain] = String(req.email || '').split('@');
+  if (accountDomain !== ACCOUNT_DOMAIN || accountName !== username) {
+    return res.status(400).json({ error: 'That username does not match this account.' });
+  }
+  if (!validDob(dob, now)) return res.status(400).json({ error: 'Enter a real date of birth.' });
+  if (email && (email.length > 254 || !EMAIL_RE.test(email))) {
+    return res.status(400).json({ error: 'That email address does not look right.' });
+  }
+
+  try {
+    const result = await updateProfile(req.uid, (user) => {
+      if (user.dob) return { ok: false, status: 409, error: 'This account already has its details set.' };
+      user.username = username;
+      user.email = email || null;
+      user.dob = dob;
+      user.ageTier = tierFor(dob, now);
+      user.ageSetAt = now;
+      return { ok: true, ageTier: user.ageTier };
+    });
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    res.json({ ageTier: result.ageTier });
+  } catch (err) {
+    console.error('Could not save profile:', err.message);
     res.status(500).json({ error: 'Account storage is unavailable right now.' });
   }
 });
