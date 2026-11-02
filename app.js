@@ -4,6 +4,7 @@
 
   const STORAGE_KEY = 'qrox.chats.v1';
   const MAX_FILE_BYTES = 10 * 1024 * 1024;
+  const MAX_IMAGE_BYTES = 2.5 * 1024 * 1024; // Groq allows 4 MB per request, and base64 adds about a third
   const MAX_TEXT_CHARS = 150000;
   const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
   const TEXT_EXT = /\.(txt|md|csv|tsv|json|js|jsx|ts|tsx|py|html|css|xml|yml|yaml|sql|java|c|h|cpp|go|rs|rb|php|sh|log)$/i;
@@ -208,7 +209,7 @@
       text,
       files: pending.map((f) => f.name),
       modelText,
-      media: mediaFiles.map(({ kind, mediaType, data }) => ({ kind, mediaType, data })),
+      media: mediaFiles.map(({ kind, name, mediaType, data }) => ({ kind, name, mediaType, data })),
     });
     const payload = toPayload(chat);
 
@@ -275,6 +276,7 @@
     if (file.size > MAX_FILE_BYTES) throw new Error(`${file.name} is larger than 10 MB.`);
 
     if (IMAGE_TYPES.includes(file.type)) {
+      if (file.size > MAX_IMAGE_BYTES) throw new Error(`${file.name} is larger than 2.5 MB. Please use a smaller image.`);
       return { name: file.name, kind: 'image', mediaType: file.type, data: await toBase64(file) };
     }
     if (file.type === 'application/pdf') {
