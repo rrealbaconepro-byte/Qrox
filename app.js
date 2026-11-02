@@ -1,6 +1,6 @@
 // app.js: Qrox front end
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 
 // Firebase web config. These values are public by design. Security comes from the server checks and the
 // Firestore rules. Analytics is left out until the site has a cookie consent banner.
@@ -31,6 +31,9 @@ const auth = getAuth(firebaseApp);
   const ROLE_NAMES = { thinker: 'Thinker', researcher: 'Researcher', coder: 'Code Bot', creative: 'Creative', verifier: 'Verifier' };
   const DOUBLE_CHECK = 'Double-check your previous answer for mistakes. Correct anything that is wrong, and say clearly what you are not sure about.';
   const SUPPORT_EMAIL = 'bbrootorg@gmail.com';
+  const ACCOUNT_DOMAIN = 'users.qrox.bbroot.com';   // hidden account email domain; nothing is sent there
+  const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
+  let signingUp = false;                            // stops the age prompt from opening during sign-up
   const CREDIT_CEILING = 1000000;
   const AGE_LABELS = { unknown: 'Age not set', under13: 'Under 13', teen: 'Teen (13–17)', adult: 'Adult (18+)' };
   const KEYS = {
@@ -108,7 +111,11 @@ self.onmessage = async (e) => {
   const $ = (id) => document.getElementById(id);
   const els = {
     app: $('app'), scrim: $('scrim'), toast: $('toast'),
-    signin: $('signin'), signinBtn: $('signinBtn'), account: $('account'), creditsText: $('creditsText'),
+    signin: $('signin'), tabLogin: $('tabLogin'), tabSignup: $('tabSignup'), loginForm: $('loginForm'), signupForm: $('signupForm'),
+    loginUser: $('loginUser'), loginPass: $('loginPass'), loginError: $('loginError'),
+    signupUser: $('signupUser'), signupPass: $('signupPass'), signupPass2: $('signupPass2'), signupDob: $('signupDob'),
+    signupEmail: $('signupEmail'), signupError: $('signupError'),
+    account: $('account'), creditsText: $('creditsText'),
     creditBar: $('creditBar'), refill: $('refill'), ageLabel: $('ageLabel'), ageBtn: $('ageBtn'), signOutBtn: $('signOutBtn'),
     notice: $('notice'), noticeText: $('noticeText'), noticeBtn: $('noticeBtn'),
     toggleSidebar: $('toggleSidebar'), collapseBtn: $('collapseBtn'), searchNav: $('searchNav'), newChat: $('newChat'),
@@ -547,7 +554,7 @@ self.onmessage = async (e) => {
   function openAge() {
     els.dob.max = new Date().toISOString().slice(0, 10);
     els.ageResult.textContent = '';
-    const body = `My Qrox age group looks wrong.\nAccount email: ${user?.email || 'unknown'}\nWhat it should be: `;
+    const body = `My Qrox age group looks wrong.\nUsername: ${profile?.username || 'unknown'}\nWhat it should be: `;
     els.reportAge.href = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Qrox: wrong age group')}&body=${encodeURIComponent(body)}`;
     if (!els.ageDialog.open) els.ageDialog.showModal();
   }
@@ -1461,12 +1468,90 @@ self.onmessage = async (e) => {
   els.jump.addEventListener('click', () => scrollToBottom(true));
   els.messages.addEventListener('scroll', updateJump, { passive: true });
 
-  els.signinBtn.addEventListener('click', async () => {
-    try {
-      await signInWithPopup(auth, new GoogleAuthProvider());
-    } catch {
-      showToast('Sign-in was cancelled or failed.', 2600);
+  // ---------- Sign up and log in (username and password) ----------
+  const accountEmail = (username) => `${username}@${ACCOUNT_DOMAIN}`;
+
+  function setAuthTab(signup) {
+    els.loginForm.classList.toggle('hidden', signup);
+    els.signupForm.classList.toggle('hidden', !signup);
+    els.tabLogin.setAttribute('aria-selected', String(!signup));
+    els.tabSignup.setAttribute('aria-selected', String(signup));
+    els.loginError.textContent = '';
+    els.signupError.textContent = '';
+  }
+
+  function authMessage(err) {
+    const code = err?.code || '';
+    if (['auth/invalid-credential', 'auth/invalid-login-credentials', 'auth/wrong-password', 'auth/user-not-found'].includes(code)) {
+      return 'Wrong username or password.';
     }
+    if (code === 'auth/email-already-in-use') return 'That username is already taken.';
+    if (code === 'auth/weak-password') return 'Choose a stronger password.';
+    if (code === 'auth/too-many-requests') return 'Too many attempts. Wait a few minutes and try again.';
+    if (code === 'auth/network-request-failed') return 'Check your connection and try again.';
+    return 'Something went wrong. Please try again.';
+  }
+
+  els.tabLogin.addEventListener('click', () => setAuthTab(false));
+  els.tabSignup.addEventListener('click', () => setAuthTab(true));
+
+  els.loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = els.loginUser.value.trim().toLowerCase();
+    const password = els.loginPass.value;
+    els.loginError.textContent = '';
+    if (!USERNAME_RE.test(username)) {
+      els.loginError.textContent = 'Enter your username.';
+      return;
+    }
+    if (!password) {
+      els.loginError.textContent = 'Enter your password.';
+      return;
+    }
+    try {
+      await signInWithEmailAndPassword(auth, accountEmail(username), password);
+      els.loginPass.value = '';
+    } catch (err) {
+      els.loginError.textContent = authMessage(err);
+    }
+  });
+
+  els.signupForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = els.signupUser.value.trim().toLowerCase();
+    const password = els.signupPass.value;
+    const confirm = els.signupPass2.value;
+    const dob = els.signupDob.value;
+    const email = els.signupEmail.value.trim();
+    const fail = (message) => { els.signupError.textContent = message; };
+
+    fail('');
+    if (!USERNAME_RE.test(username)) return fail('Usernames are 3 to 20 letters, numbers or underscores.');
+    if (password.length < 8) return fail('Use at least 8 characters for your password.');
+    if (password !== confirm) return fail('The two passwords do not match.');
+    if (!dob) return fail('Enter your date of birth.');
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('That email address does not look right.');
+
+    signingUp = true;
+    try {
+      await createUserWithEmailAndPassword(auth, accountEmail(username), password);
+    } catch (err) {
+      signingUp = false;
+      return fail(authMessage(err));
+    }
+
+    // The account exists now. Save the details the form collected, which also sets the age group.
+    try {
+      const res = await api('/api/profile', { method: 'POST', body: JSON.stringify({ username, dob, email }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) fail(data.error || 'Your account was created, but your details were not saved. You can confirm your age later.');
+    } catch {
+      fail('Your account was created, but your details could not be saved. Check your connection and log in again.');
+    }
+    signingUp = false;
+    els.signupPass.value = '';
+    els.signupPass2.value = '';
+    await loadProfile();
   });
   els.signOutBtn.addEventListener('click', () => signOut(auth).catch(() => showToast('Could not sign out. Try again.')));
   els.ageBtn.addEventListener('click', openAge);
@@ -1601,7 +1686,7 @@ self.onmessage = async (e) => {
     renderAccount();
     if (user) {
       await loadProfile();
-      if (profile?.needsAge && !ageAsked) {
+      if (profile?.needsAge && !ageAsked && !signingUp) {
         ageAsked = true;
         openAge();
       }
