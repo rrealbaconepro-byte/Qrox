@@ -361,13 +361,14 @@ function reserve(user, now, { abusive, cost }) {
   }
   user.credits -= cost;
   user.dripAt = now + HOUR;
-  return { kind: 'ok', tier: user.dob ? user.ageTier : 'unknown' };
+  return { kind: 'ok', tier: effectiveTier(user) };
 }
 
 function summarize(user, now) {
   return {
     credits: user.credits,
-    ageTier: user.dob ? user.ageTier : 'unknown',
+    ageTier: effectiveTier(user),
+    verified: Boolean(user.verified),
     needsAge: !user.dob,
     username: user.username || null,
     email: user.email || null,
@@ -401,14 +402,14 @@ function validDob(dob, now) {
 const CSP = [
   "default-src 'self'",
   // 'unsafe-eval' is needed for the Code Lab's JavaScript runner. 'wasm-unsafe-eval' is needed for Python (Pyodide).
-  "script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://www.gstatic.com https://apis.google.com",
+  "script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://www.gstatic.com https://apis.google.com https://cdn.withpersona.com",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "media-src 'self' blob:",
   "font-src 'self' data:",
-  "connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://apis.google.com https://accounts.google.com https://cdn.jsdelivr.net https://www.gstatic.com",
+  "connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://apis.google.com https://accounts.google.com https://cdn.jsdelivr.net https://www.gstatic.com https://*.withpersona.com",
   "worker-src 'self' blob: https://cdn.jsdelivr.net",
-  "frame-src 'self' blob: https://*.firebaseapp.com https://accounts.google.com",
+  "frame-src 'self' blob: https://*.firebaseapp.com https://accounts.google.com https://*.withpersona.com",
   "object-src 'none'",
   "base-uri 'self'",
   "frame-ancestors 'none'",
@@ -446,9 +447,120 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), microphone=(self)');
+  res.setHeader('Permissions-Policy', 'camera=(self "https://withpersona.com"), geolocation=(), microphone=(self)');
   next();
 });
+// ---------- Age verification with Persona ----------
+// Persona checks a government ID and a live selfie. Qrox only receives the verified age group, then asks
+// Persona to delete the inquiry (ID and selfie) and the account (extracted fields).
+const crypto = require('crypto');
+const PERSONA_API = 'https://withpersona.com/api/v1';
+const PERSONA_VERSION = '2025-12-08';
+const PERSONA_KEY = process.env.PERSONA_API_KEY;
+const PERSONA_TEMPLATE_ID = process.env.PERSONA_TEMPLATE_ID;
+const PERSONA_ENVIRONMENT_ID = process.env.PERSONA_ENVIRONMENT_ID;
+const PERSONA_WEBHOOK_SECRET = process.env.PERSONA_WEBHOOK_SECRET;
+const VERIFY_STARTS_PER_DAY = 3;
+const WEBHOOK_WINDOW_MS = 5 * 60 * 1000;
+
+// The age group Qrox applies: the verified one when there is one, otherwise the one the visitor entered.
+function effectiveTier(user) {
+  if (user.verified && user.verifiedTier) return user.verifiedTier;
+  return user.dob ? user.ageTier : 'unknown';
+}
+
+async function personaRequest(method, route) {
+  const res = await fetch(`${PERSONA_API}${route}`, {
+    method,
+    headers: { Authorization: `Bearer ${PERSONA_KEY}`, 'Persona-Version': PERSONA_VERSION, Accept: 'application/json' },
+  });
+  if (!res.ok) throw new Error(`Persona ${method} ${route} returned ${res.status}`);
+  return res.json();
+}
+
+// Persona signs each webhook as "t=<unix seconds>,v1=<HMAC-SHA256 hex of t.rawBody>".
+// The header can hold several pairs while a secret rotates. Any matching pair is accepted.
+function verifyPersonaSignature(rawBody, header) {
+  if (!PERSONA_WEBHOOK_SECRET || !header) return false;
+  return String(header).trim().split(/\s+/).some((pair) => {
+    const { t, v1 } = Object.fromEntries(pair.split(',').map((p) => p.split('=')));
+    if (!t || !v1) return false;
+    // Persona sends no time limit, so requests older than five minutes are rejected here.
+    if (Math.abs(Date.now() - Number(t) * 1000) > WEBHOOK_WINDOW_MS) return false;
+    const expected = crypto.createHmac('sha256', PERSONA_WEBHOOK_SECRET).update(`${t}.${rawBody}`).digest('hex');
+    const a = Buffer.from(expected);
+    const b = Buffer.from(v1);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  });
+}
+
+// Handles one Persona event. Each event is processed once, even if Persona sends it twice.
+async function handlePersonaEvent(event) {
+  const eventId = event?.data?.id;
+  const name = event?.data?.attributes?.name;
+  const inquiry = event?.data?.attributes?.payload?.data;
+  if (!eventId || !name || !inquiry) return;
+  if (!['inquiry.approved', 'inquiry.declined'].includes(name)) return;
+
+  const seenRef = db.collection('personaEvents').doc(eventId);
+  if ((await seenRef.get()).exists) return;
+
+  const uid = inquiry.attributes?.['reference-id'];
+  if (typeof uid !== 'string' || !uid) return;
+  const passed = name === 'inquiry.approved';
+  const accountId = inquiry.relationships?.account?.data?.id || null;
+
+  let birthdate = null;
+  if (passed && accountId) {
+    // Persona returns the birthdate in the account's fields. Confirm this path with a test inquiry.
+    const account = await personaRequest('GET', `/accounts/${accountId}`);
+    const value = account?.data?.attributes?.fields?.birthdate?.value;
+    if (typeof value === 'string' && validDob(value, Date.now())) birthdate = value;
+  }
+
+  const now = Date.now();
+  await updateProfile(uid, (user) => {
+    if (passed && birthdate) {
+      user.dob = birthdate;
+      user.ageTier = tierFor(birthdate, now);
+      user.verified = true;
+      user.verifiedTier = user.ageTier;
+      user.verifiedAt = now;
+      user.verificationStatus = 'verified';
+    } else {
+      user.verified = false;
+      user.verificationStatus = 'failed';
+    }
+    return {};
+  });
+
+  // Delete what Persona holds for this check: the inquiry (ID and selfie) and the account (extracted fields).
+  await personaRequest('DELETE', `/inquiries/${inquiry.id}`);
+  if (accountId) await personaRequest('DELETE', `/accounts/${accountId}`);
+  await seenRef.set({ at: now, name });
+}
+
+// Persona calls this URL. It must come before express.json, because the signature is checked on the raw body.
+app.post('/api/persona/webhook', express.raw({ type: '*/*', limit: '1mb' }), async (req, res) => {
+  if (!db) return res.status(503).end();
+  const rawBody = req.body.toString('utf8');
+  if (!verifyPersonaSignature(rawBody, req.headers['persona-signature'])) return res.status(401).end();
+
+  let event;
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return res.status(400).end();
+  }
+  try {
+    await handlePersonaEvent(event);
+    res.status(200).end();
+  } catch (err) {
+    console.error('Persona webhook failed:', err.message);
+    res.status(500).end(); // Persona retries failed deliveries
+  }
+});
+
 app.use(express.json({ limit: '30mb' }));
 
 // Only these files are public. server.js, package.json, firestore.rules and node_modules are never served.
@@ -549,6 +661,46 @@ app.post('/api/profile', requireUser, async (req, res) => {
     res.json({ ageTier: result.ageTier });
   } catch (err) {
     console.error('Could not save profile:', err.message);
+    res.status(500).json({ error: 'Account storage is unavailable right now.' });
+  }
+});
+
+// Starts a Persona check. The browser gets the template and reference ID, which hold no secrets.
+app.post('/api/verify/start', requireUser, async (req, res) => {
+  if (!PERSONA_KEY || !PERSONA_TEMPLATE_ID || !PERSONA_ENVIRONMENT_ID) {
+    return res.status(503).json({ error: 'ID verification is not set up yet.' });
+  }
+  const now = Date.now();
+  try {
+    const result = await updateProfile(req.uid, (user) => {
+      if (user.verified) return { ok: false, status: 409, error: 'Your age is already verified.' };
+      if (!user.verifyWindowStart || now - user.verifyWindowStart > DAY) {
+        user.verifyWindowStart = now;
+        user.verifyStarts = 0;
+      }
+      if ((user.verifyStarts || 0) >= VERIFY_STARTS_PER_DAY) {
+        return { ok: false, status: 429, error: 'You have tried verifying several times today. Please try again tomorrow.' };
+      }
+      user.verifyStarts = (user.verifyStarts || 0) + 1;
+      user.verificationStatus = 'started';
+      return { ok: true };
+    });
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    res.json({ templateId: PERSONA_TEMPLATE_ID, environmentId: PERSONA_ENVIRONMENT_ID, referenceId: req.uid });
+  } catch (err) {
+    console.error('Could not start verification:', err.message);
+    res.status(500).json({ error: 'Account storage is unavailable right now.' });
+  }
+});
+
+app.get('/api/verify/status', requireUser, async (req, res) => {
+  try {
+    res.json(await updateProfile(req.uid, (user) => ({
+      verified: Boolean(user.verified),
+      status: user.verificationStatus || 'none',
+      ageTier: effectiveTier(user),
+    })));
+  } catch (err) {
     res.status(500).json({ error: 'Account storage is unavailable right now.' });
   }
 });
