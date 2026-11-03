@@ -133,6 +133,7 @@ self.onmessage = async (e) => {
     lab: $('lab'), labLang: $('labLang'), labCode: $('labCode'), labRun: $('labRun'), labCopy: $('labCopy'),
     labClose: $('labClose'), labOutput: $('labOutput'), labPreview: $('labPreview'),
     ageDialog: $('ageDialog'), ageForm: $('ageForm'), dob: $('dob'), ageResult: $('ageResult'),
+    verifyBtn: $('verifyBtn'), verifyStatus: $('verifyStatus'),
     reportAge: $('reportAge'), closeAge: $('closeAge'),
   };
 
@@ -523,7 +524,7 @@ self.onmessage = async (e) => {
       } else {
         els.creditsText.textContent = `${profile.credits.toLocaleString()} credits`;
         els.creditBar.style.width = `${Math.min(100, (profile.credits / CREDIT_CEILING) * 100)}%`;
-        els.ageLabel.textContent = AGE_LABELS[profile.ageTier] || AGE_LABELS.unknown;
+        els.ageLabel.textContent = (AGE_LABELS[profile.ageTier] || AGE_LABELS.unknown) + (profile.verified ? ' · verified' : '');
         els.refill.textContent = profile.refillInMs ? `Empty. You get 9,000 credits in ${formatMs(profile.refillInMs)}.` : '';
       }
     }
@@ -553,6 +554,9 @@ self.onmessage = async (e) => {
 
   function openAge() {
     els.dob.max = new Date().toISOString().slice(0, 10);
+    els.verifyBtn.disabled = Boolean(profile?.verified);
+    els.verifyBtn.textContent = profile?.verified ? 'Verified' : 'Verify with ID';
+    setVerifyStatus('');
     els.ageResult.textContent = '';
     const body = `My Qrox age group looks wrong.\nUsername: ${profile?.username || 'unknown'}\nWhat it should be: `;
     els.reportAge.href = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Qrox: wrong age group')}&body=${encodeURIComponent(body)}`;
@@ -1383,6 +1387,98 @@ self.onmessage = async (e) => {
     }, 30000);
     worker.postMessage(code);
   }
+
+  // ---------- Age verification with Persona ----------
+  let personaLoading = null;
+
+  function setVerifyStatus(message) {
+    els.verifyStatus.textContent = message;
+  }
+
+  // Loads Persona's web SDK once.
+  function loadPersona() {
+    if (window.Persona) return Promise.resolve(window.Persona);
+    if (!personaLoading) {
+      personaLoading = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.withpersona.com/dist/persona-v5.1.2.js';
+        script.onload = () => resolve(window.Persona);
+        script.onerror = () => {
+          personaLoading = null;
+          reject(new Error('Could not load the verification widget. Check your connection.'));
+        };
+        document.head.append(script);
+      });
+    }
+    return personaLoading;
+  }
+
+  async function startVerification() {
+    if (!user) return;
+    els.verifyBtn.disabled = true;
+    setVerifyStatus('Opening verification…');
+    try {
+      const res = await api('/api/verify/start', { method: 'POST', body: '{}' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setVerifyStatus(data.error || 'Verification could not start.');
+        els.verifyBtn.disabled = false;
+        return;
+      }
+      const Persona = await loadPersona();
+      const client = new Persona.Client({
+        templateId: data.templateId,
+        environmentId: data.environmentId,
+        referenceId: data.referenceId,
+        onReady: () => client.open(),
+        onComplete: () => {
+          setVerifyStatus('Checking your ID. This can take a minute.');
+          pollVerification(0);
+        },
+        onCancel: () => {
+          setVerifyStatus('Verification was cancelled.');
+          els.verifyBtn.disabled = false;
+        },
+        onError: () => {
+          setVerifyStatus('Something went wrong during verification. Please try again.');
+          els.verifyBtn.disabled = false;
+        },
+      });
+    } catch (err) {
+      setVerifyStatus(err.message || 'Verification could not start.');
+      els.verifyBtn.disabled = false;
+    }
+  }
+
+  // Persona reports the result to the server by webhook. Wait here until the server has recorded it.
+  async function pollVerification(attempt) {
+    if (attempt > 40) {
+      setVerifyStatus('Still checking. Your age group will update when Persona confirms it.');
+      els.verifyBtn.disabled = false;
+      return;
+    }
+    await sleep(3000);
+    let data = null;
+    try {
+      const res = await api('/api/verify/status');
+      if (res.ok) data = await res.json();
+    } catch {
+      // Try again on the next round.
+    }
+    if (data?.verified) {
+      setVerifyStatus(`Verified. Your age group: ${AGE_LABELS[data.ageTier]}.`);
+      await loadProfile();
+      return;
+    }
+    if (data?.status === 'failed') {
+      setVerifyStatus('We could not verify your ID. You can try again.');
+      els.verifyBtn.disabled = false;
+      return;
+    }
+    pollVerification(attempt + 1);
+  }
+
+  els.verifyBtn.addEventListener('click', startVerification);
 
   // ---------- Dialogs ----------
   function openMemory() {
