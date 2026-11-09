@@ -115,7 +115,7 @@ self.onmessage = async (e) => {
     loginUser: $('loginUser'), loginPass: $('loginPass'), loginError: $('loginError'),
     signupUser: $('signupUser'), signupPass: $('signupPass'), signupPass2: $('signupPass2'), signupDob: $('signupDob'),
     signupEmail: $('signupEmail'), signupError: $('signupError'),
-    account: $('account'), creditsText: $('creditsText'),
+    account: $('account'), accountLabel: $('accountLabel'), creditsText: $('creditsText'),
     creditBar: $('creditBar'), refill: $('refill'), ageLabel: $('ageLabel'), ageBtn: $('ageBtn'), signOutBtn: $('signOutBtn'),
     notice: $('notice'), noticeText: $('noticeText'), noticeBtn: $('noticeBtn'),
     toggleSidebar: $('toggleSidebar'), collapseBtn: $('collapseBtn'), searchNav: $('searchNav'), newChat: $('newChat'),
@@ -518,6 +518,7 @@ self.onmessage = async (e) => {
     const signedIn = Boolean(user);
     els.signin.classList.toggle('hidden', signedIn);
     els.account.classList.toggle('hidden', !signedIn);
+    els.accountLabel.textContent = signedIn ? `Account: ${profile?.username || 'Member'}` : 'Account: Guest';
     if (signedIn) {
       if (!profile) {
         els.creditsText.textContent = 'Loading…';
@@ -703,7 +704,7 @@ self.onmessage = async (e) => {
       row.append(chip);
     });
 
-    hero.append(logo, el('h1', '', 'What can I help you with?'), el('p', 'hero-sub', 'Ask anything, send images, talk to Qrox, or start with an idea below.'), row);
+    hero.append(logo, el('h1', '', 'Welcome to QROX!'), el('p', 'hero-sub', 'How can I help you today?'), row);
     els.thread.append(hero);
   }
 
@@ -1553,6 +1554,7 @@ self.onmessage = async (e) => {
   });
   els.scrim.addEventListener('click', () => setSidebar(false));
   els.newChat.addEventListener('click', newChatAction);
+  document.getElementById('chatFocus').addEventListener('click', () => els.input.focus());
   els.labNav.addEventListener('click', () => openLab());
   els.memoryNav.addEventListener('click', openMemory);
   els.settingsNav.addEventListener('click', openSettings);
